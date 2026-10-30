@@ -2,39 +2,43 @@
 
 GambitRate ingests a public chess.com player's games and turns them into opinionated answers about what is hurting their rating. It is **not** a game viewer. Every analytics endpoint ends in numbers and a verdict.
 
-**Current status: Phase 2.** One player can be ingested end to end, and `/openings` returns SQL-aggregated opening groups with sample-size-guarded verdicts. Redis caching, incremental sync, and the scheduler arrive in Phase 3.
+**Current status: Phase 3 implementation.** Sync runs as a persisted async job with progress polling. Redis caches immutable months, revalidates the current month with ETags, and serializes outbound chess.com calls across instances. Incremental sync and a scheduled re-sync job are in place. The Render Blueprint is ready; a live URL requires Render account authorization.
 
 ## Architecture
 
 ```text
-                         POST /api/players/{username}/sync
-                                     |
-                                     v
-                            PlayerSyncController
-                                     |
-                                     v
-                            PlayerSyncService
-                     /               |                \
-                    v                v                 v
-            ChessComClient       PgnParser         GameFactory
-            (RestClient,         (chesslib)        (result, color,
-             serialized,               |            termination,
-             429 backoff)              |            accuracy)
-                    \                 |                 /
-                     \                v                /
-                      +------ monthly game list ------+
-                                     |
-                                     v
-                         MonthPersistenceService
-                         (one @Transactional unit)
-                                     |
-                                     v
-                                PostgreSQL
-                      player / game / move + Flyway
-
-Redis is provisioned in Compose for Phase 3 caching and the distributed
-outbound rate limiter. It is deliberately not used yet.
+POST /api/players/{username}/sync
+              |
+              v
+      PlayerSyncController
+              |
+              v
+        SyncJobService --------> sync_job (QUEUED/RUNNING/DONE/FAILED)
+              |                         ^
+              v                         |
+      syncTaskExecutor                 GET .../sync/status
+              |
+              v
+        SyncJobWorker
+              |
+              v
+        PlayerSyncService
+       /        |          \
+      v         v           v
+ChessComClient PgnParser  GameFactory
+  |  |              \          /
+  |  +-- Redis gate  +-- monthly list
+  |  +-- Redis cache         |
+  |                          v
+  |                 MonthPersistenceService
+  |                 (one @Transactional unit)
+  v                          |
+chess.com                   v
+                       PostgreSQL
+                player / game / move / sync_job
 ```
+
+`ChessComClient` checks Redis before calling chess.com: immutable past months are cache hits, while the current month and archive list revalidate with `If-None-Match`. Redis also holds a short-lived host lock so only one chess.com request is in flight across app instances. The scheduler enqueues the same persistent jobs for tracked players.
 
 Analytics take a separate path:
 
@@ -65,10 +69,12 @@ Analytics do not load a player's games into Java. PostgreSQL computes the groups
 - Java 21, Spring Boot 3.5, Maven
 - Spring Web, Spring Data JPA, Bean Validation
 - PostgreSQL 16, Flyway
+- Redis 7 via Spring Cache, Lettuce, and a distributed outbound host gate
 - chesslib 1.3.7 for PGN parsing and move validation
 - springdoc-openapi / Swagger UI
-- JUnit 5, Testcontainers PostgreSQL, WireMock
+- JUnit 5, Testcontainers PostgreSQL + Redis, WireMock
 - Docker Compose (app, PostgreSQL, Redis)
+- Render Blueprint (`render.yaml`)
 
 ## Run locally
 
@@ -94,27 +100,53 @@ docker compose up --build
 
 On Windows PowerShell, use `.\mvnw.cmd` instead of `./mvnw`.
 
-## Ingest one player
+## Sync a player
 
 ```bash
 curl -i -X POST http://localhost:8080/api/players/YOUR_CHESSCOM_USERNAME/sync
 ```
 
-Phase 1 sync is intentionally synchronous and returns a summary:
+The request returns `202 Accepted` with a persisted job and a `Location` header:
 
 ```json
 {
+  "id": 42,
   "username": "exampleuser",
-  "monthsProcessed": 18,
-  "gamesSeen": 412,
-  "variantsSkipped": 3,
-  "gamesImported": 409,
-  "gamesSkippedExisting": 0,
-  "movesImported": 24481
+  "status": "QUEUED",
+  "monthsTotal": 0,
+  "monthsDone": 0,
+  "createdAt": "2026-10-30T12:00:00Z",
+  "startedAt": null,
+  "finishedAt": null,
+  "error": null
 }
 ```
 
-Run the same command again. `gamesImported` must be `0`, `gamesSkippedExisting` must equal `gamesSeen`, and no duplicate rows are created.
+Poll the status:
+
+```bash
+curl http://localhost:8080/api/players/YOUR_CHESSCOM_USERNAME/sync/status
+```
+
+```json
+{
+  "id": 42,
+  "username": "exampleuser",
+  "status": "RUNNING",
+  "monthsTotal": 18,
+  "monthsDone": 7,
+  "createdAt": "2026-10-30T12:00:00Z",
+  "startedAt": "2026-10-30T12:00:01Z",
+  "finishedAt": null,
+  "error": null
+}
+```
+
+Statuses are `QUEUED`, `RUNNING`, `DONE`, and `FAILED`. Only one job per player can be queued or running; a repeated request returns the active job. Jobs older than the stale threshold are marked failed so a crashed process cannot block future syncs forever.
+
+The first time a player is requested, the POST validates the chess.com profile synchronously so an unknown username still returns `404`. All ingestion after that point is asynchronous.
+
+Run the same command twice. The second job imports zero new games and leaves the row counts unchanged.
 
 Inspect the persisted data:
 
@@ -204,13 +236,27 @@ All values have safe local defaults and can be overridden with environment varia
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/gambitrate` | JDBC URL |
-| `DATABASE_USERNAME` | `gambitrate` | Database user |
+| `DATABASE_HOST` | `localhost` | PostgreSQL host |
+| `DATABASE_PORT` | `5432` | PostgreSQL port |
+| `DATABASE_NAME` | `gambitrate` | PostgreSQL database |
+| `DATABASE_USER` | `gambitrate` | Database user |
 | `DATABASE_PASSWORD` | `gambitrate` | Database password |
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_PASSWORD` | empty | Optional Redis password |
 | `CHESSCOM_BASE_URL` | `https://api.chess.com` | Override for WireMock/testing |
 | `CHESSCOM_USER_AGENT` | `GambitRate/1.0 (contact: you@example.com)` | Change the contact address before deploying |
 | `CHESSCOM_REQUEST_DELAY` | `250ms` | Minimum pause between outbound calls |
 | `CHESSCOM_MAX_ATTEMPTS` | `4` | Total attempts for a 429 response |
+| `CHESSCOM_PAST_MONTH_TTL` | `3650d` | Redis TTL for immutable monthly archives |
+| `CHESSCOM_CURRENT_MONTH_TTL` | `5m` | Redis TTL for the mutable current month |
+| `CHESSCOM_ARCHIVES_TTL` | `5m` | Redis body TTL used for archive revalidation |
+| `CHESSCOM_ETAG_TTL` | `7d` | ETag/Last-Modified revalidation metadata TTL |
+| `CHESSCOM_HOST_LOCK_LEASE` | `2m` | Redis outbound lock lease |
+| `CHESSCOM_HOST_LOCK_WAIT` | `60s` | Maximum wait for the distributed host gate |
+| `SYNC_STALE_AFTER` | `2h` | Age after which a QUEUED/RUNNING job is treated as abandoned |
+| `SYNC_FIXED_DELAY` | `1h` | Scheduled re-sync interval |
+| `SYNC_INITIAL_DELAY` | `10m` | Delay before the first scheduled sweep |
 | `PORT` | `8080` | HTTP port |
 
 ## Tests
@@ -223,11 +269,16 @@ All values have safe local defaults and can be overridden with environment varia
 ./mvnw verify
 ```
 
-The integration tests start PostgreSQL with Testcontainers. `SyncIngestionIT` also runs a WireMock chess.com server. They assert concrete values rather than just status codes:
+The integration tests start PostgreSQL and Redis with Testcontainers. `SyncIngestionIT` also runs a WireMock chess.com server. They assert concrete values rather than just status codes:
 
+- async POST returns `202`; polling reaches `DONE` with the right month progress;
 - sync is idempotent: two games and eleven moves after two runs;
-- PGN clocks, color, result, termination, opening, accuracy, and `is_player_move` are correct;
+- PGN clocks, color, result, termination, opening, accuracy, `last_game_end_time`, and `is_player_move` are correct;
 - variants are excluded and the descriptive `User-Agent` is sent;
+- a second sync reads the immutable past month from Redis without another HTTP call;
+- incremental sync selects only the current month and sends `If-None-Match`; a `304` reuses the cached body;
+- the Redis host gate rejects a second concurrent caller until the first releases;
+- the scheduler starts jobs for every tracked player and continues after one failure;
 - opening groups have exact win rates, draw rates, rating deltas, colors, baselines, verdicts, ordering, and estimated Elo costs;
 - date, time-class, `minGames`, and opening-line filters work;
 - a 5-game sample is not flagged, while a 10-game sample with the same winrate is;
@@ -243,9 +294,15 @@ No test calls the live chess.com API.
 
 **PGN parsing.** chesslib loads and validates the PGN move text. GambitRate only extracts the clock annotation from comments; it does not treat clocks as move quality. `clock_remaining_ms` is time on the clock, not evidence of a blunder.
 
-**Outbound politeness.** Calls are serialized with a reentrant lock, separated by a configurable delay, and use a descriptive User-Agent. HTTP 429 respects `Retry-After` when present and otherwise backs off exponentially. Rate-limit exhaustion maps to `503 Service Unavailable` with a `Retry-After` header.
+**Async sync jobs.** `POST /sync` persists a `sync_job`, returns `202`, and hands processing to a bounded executor. A partial unique index allows only one `QUEUED`/`RUNNING` job per player. Jobs older than two hours are marked `FAILED` so a process crash cannot block retries forever. `POST` still validates a first-time username synchronously to preserve the `404` contract.
 
-**No premature caching or incrementality.** Redis, ETag revalidation, immutable-month caching, incremental month selection, and scheduled sync are Phase 3.
+**Outbound politeness.** A Redis lock leases the chess.com host to one caller at a time across instances. Requests are separated by a configurable delay and use a descriptive User-Agent. HTTP 429 honors `Retry-After` in seconds or HTTP-date form and otherwise backs off exponentially. Exhausted synchronous checks map to `503` with `Retry-After`; async failures are recorded on the job.
+
+**Redis caching and revalidation.** Spring Cache stores raw monthly JSON in Redis: immutable past months use a 3,650-day TTL and are served without an HTTP call; the current month uses a 5-minute body TTL but is always re-fetched. ETags are stored in Redis, and current-month/archive requests send `If-None-Match`; a `304` reuses the cached body. Cache hits, misses, revalidations, status codes, and latency are logged.
+
+**Incremental sync.** Each player tracks `last_synced_month` and `last_game_end_time`. Months older than `last_synced_month` are skipped unless they are the current month, which is always re-fetched. Progress updates after each fully committed month, so a retry starts from the last successful month; the unique chess.com game constraint keeps retries idempotent.
+
+**Scheduling.** A configurable fixed-delay scheduled sweep enqueues syncs for every player with a `last_synced_at`. Active jobs are reused, so overlapping sweeps do not duplicate work.
 
 **SQL-first analytics.** `/openings` filters and aggregates in PostgreSQL. A `LAG` window over each time class computes real rating changes between consecutive games; a `GROUP BY` produces color + ECO or opening-line groups. Java receives only the aggregate rows, applies the verdict guard, sorts, and serializes. No player history is loaded into memory.
 
@@ -276,14 +333,21 @@ Every error uses one JSON shape:
 | Invalid username or filter | 400 |
 | Unknown chess.com player | 404 |
 | Player exists on chess.com but has not been synced | 404 |
+| Player has no sync job yet | 404 |
 | Chess.com failure or unparseable PGN | 502 |
-| Chess.com rate-limit exhausted | 503 + `Retry-After` |
+| Synchronous chess.com rate-limit exhaustion | 503 + `Retry-After` |
+
+Async ingestion failures are recorded in the sync job’s `error` field and do not change the already-returned `202`.
+
+## Deployment
+
+`render.yaml` provisions the free Render web service, Postgres database, and Key Value cache. See [DEPLOYMENT.md](DEPLOYMENT.md) for the one-time setup and free-tier sleep caveats. The repository is deployment-ready but has not been published to a live host from this session because no Render account authorization is available.
 
 ## Roadmap
 
 1. **Phase 1 (done):** skeleton, Flyway schema, one-player ingestion, parsed moves.
 2. **Phase 2 (done):** `/openings` with SQL-first aggregates, guarded verdicts, tests, Swagger.
-3. Phase 3: Redis caching, distributed outbound rate limiter, incremental sync, scheduler, deploy.
+3. **Phase 3 (implementation done, deploy pending authorization):** async jobs, Redis caching, distributed outbound gate, incremental sync, scheduler, Render Blueprint.
 4. Phase 4: `/time-controls`, `/tilt`, `/trends`, `/summary`.
 5. Phase 5: one-page chart frontend.
 6. Phase 6 (optional): feature-flagged Stockfish analysis, only then `/blunders-by-clock`.
