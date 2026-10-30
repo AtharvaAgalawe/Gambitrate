@@ -211,6 +211,171 @@ class Phase4AnalyticsIT {
         assertThat(response.getBody().path("message").asText()).contains("nobody");
     }
 
+    @Test
+    void tilt_comparesPostLossAndPostWinAndGroupsSessionsHoursAndDays() {
+        seedTiltData();
+
+        JsonNode body = get(
+                "/api/players/tiltuser/tilt?minGames=1&tz=America/New_York"
+        ).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.path("filters").path("timezone").asText())
+                .isEqualTo("America/New_York");
+        assertThat(body.path("sessionGapMinutes").asLong()).isEqualTo(30);
+        assertThat(body.path("overall").path("games").asLong()).isEqualTo(18);
+        assertThat(body.path("overall").path("wins").asLong()).isEqualTo(11);
+        assertThat(body.path("overall").path("losses").asLong()).isEqualTo(7);
+        assertThat(body.path("overall").path("winRate").asDouble())
+                .isCloseTo(0.6111, within(0.0001));
+
+        JsonNode postLoss = body.path("postLoss");
+        assertThat(postLoss.path("previousResult").asText()).isEqualTo("loss");
+        assertThat(postLoss.path("games").asLong()).isEqualTo(7);
+        assertThat(postLoss.path("wins").asLong()).isEqualTo(2);
+        assertThat(postLoss.path("winRate").asDouble()).isCloseTo(0.2857, within(0.0001));
+        assertThat(postLoss.path("averageRatingChange").asDouble())
+                .isCloseTo(-5.0, within(0.01));
+        assertThat(postLoss.path("ratingChangeSamples").asLong()).isEqualTo(7);
+
+        JsonNode postWin = body.path("postWin");
+        assertThat(postWin.path("games").asLong()).isEqualTo(9);
+        assertThat(postWin.path("wins").asLong()).isEqualTo(7);
+        assertThat(postWin.path("winRate").asDouble()).isCloseTo(0.7778, within(0.0001));
+        assertThat(postWin.path("averageRatingChange").asDouble())
+                .isCloseTo(5.0, within(0.01));
+
+        assertThat(body.path("tiltScore").asDouble()).isCloseTo(49.21, within(0.01));
+        assertThat(body.path("sampleSufficient").asBoolean()).isTrue();
+        assertThat(body.path("significant").asBoolean()).isTrue();
+        assertThat(body.path("verdict").asText())
+                .contains("After a loss")
+                .contains("49.2-point");
+
+        JsonNode firstGame = findBy(body.path("bySessionIndex"), "gameIndex", "1");
+        assertThat(firstGame.path("games").asLong()).isEqualTo(2);
+        assertThat(firstGame.path("wins").asLong()).isEqualTo(2);
+        assertThat(firstGame.path("winRate").asDouble()).isCloseTo(1.0, within(0.0001));
+
+        JsonNode secondGame = findBy(body.path("bySessionIndex"), "gameIndex", "2");
+        assertThat(secondGame.path("games").asLong()).isEqualTo(2);
+        assertThat(secondGame.path("winRate").asDouble()).isCloseTo(0.5, within(0.0001));
+
+        JsonNode seventhGame = findBy(body.path("bySessionIndex"), "gameIndex", "7");
+        assertThat(seventhGame.path("games").asLong()).isEqualTo(1);
+        assertThat(seventhGame.path("winRate").asDouble()).isCloseTo(0.0, within(0.0001));
+
+        JsonNode hour7 = findBy(body.path("byHour"), "hourOfDay", "7");
+        assertThat(hour7.path("games").asLong()).isEqualTo(6);
+        assertThat(hour7.path("wins").asLong()).isEqualTo(6);
+        JsonNode hour8 = findBy(body.path("byHour"), "hourOfDay", "8");
+        assertThat(hour8.path("games").asLong()).isEqualTo(6);
+        assertThat(hour8.path("wins").asLong()).isEqualTo(1);
+        assertThat(hour8.path("winRate").asDouble()).isCloseTo(0.1667, within(0.0001));
+        JsonNode hour11 = findBy(body.path("byHour"), "hourOfDay", "11");
+        assertThat(hour11.path("games").asLong()).isEqualTo(6);
+        assertThat(hour11.path("winRate").asDouble()).isCloseTo(0.6667, within(0.0001));
+
+        JsonNode monday = findBy(body.path("byDay"), "day", "Monday");
+        assertThat(monday.path("isoDayOfWeek").asInt()).isEqualTo(1);
+        assertThat(monday.path("games").asLong()).isEqualTo(18);
+        assertThat(monday.path("wins").asLong()).isEqualTo(11);
+        assertThat(monday.path("winRate").asDouble()).isCloseTo(0.6111, within(0.0001));
+
+        JsonNode utcBody = get(
+                "/api/players/tiltuser/tilt?minGames=1&tz=UTC"
+        ).getBody();
+        assertThat(utcBody).isNotNull();
+        JsonNode utcHour12 = findBy(utcBody.path("byHour"), "hourOfDay", "12");
+        assertThat(utcHour12.path("games").asLong()).isEqualTo(6);
+        assertThat(utcHour12.path("wins").asLong()).isEqualTo(6);
+    }
+
+    @Test
+    void tilt_startsNewSessionAtConfiguredGap() {
+        seedPlayer("gapuser");
+        insertGame("gap-1", "rapid", playedAt(2024, 1, 1, 12, 0), "white", "win", "checkmate",
+                1500, null, movesSan(24));
+        insertGame("gap-2", "rapid", playedAt(2024, 1, 1, 12, 20), "white", "win", "checkmate",
+                1505, null, movesSan(24));
+        insertGame("gap-3", "rapid", playedAt(2024, 1, 1, 12, 50), "white", "win", "checkmate",
+                1510, null, movesSan(24));
+
+        JsonNode body = get("/api/players/gapuser/tilt?minGames=1").getBody();
+
+        assertThat(body).isNotNull();
+        JsonNode firstGame = findBy(body.path("bySessionIndex"), "gameIndex", "1");
+        assertThat(firstGame.path("games").asLong()).isEqualTo(2);
+        JsonNode secondGame = findBy(body.path("bySessionIndex"), "gameIndex", "2");
+        assertThat(secondGame.path("games").asLong()).isEqualTo(1);
+    }
+
+    @Test
+    void tilt_withholdsScoreForTinySamples() {
+        seedPlayer("tinyuser");
+        insertGame("tiny-1", "rapid", playedAt(2024, 1, 1, 12, 0), "white", "win", "checkmate",
+                1500, null, movesSan(24));
+        insertGame("tiny-2", "rapid", playedAt(2024, 1, 1, 12, 10), "white", "loss", "resign",
+                1495, null, movesSan(24));
+        insertGame("tiny-3", "rapid", playedAt(2024, 1, 1, 12, 20), "white", "win", "checkmate",
+                1500, null, movesSan(24));
+
+        ResponseEntity<JsonNode> response = get("/api/players/tinyuser/tilt");
+        JsonNode body = response.getBody();
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(body).isNotNull();
+        assertThat(body.path("sessionGapMinutes").asLong()).isEqualTo(30);
+        assertThat(body.path("postLoss").path("games").asLong()).isEqualTo(1);
+        assertThat(body.path("postWin").path("games").asLong()).isEqualTo(1);
+        assertThat(body.path("tiltScore").isNull()).isTrue();
+        assertThat(body.path("sampleSufficient").asBoolean()).isFalse();
+        assertThat(body.path("verdict").asText()).contains("Not enough games");
+    }
+
+    @Test
+    void tilt_returns400_whenTimezoneIsInvalid() {
+        seedPlayer("tzuser");
+
+        ResponseEntity<JsonNode> response = get("/api/players/tzuser/tilt?tz=Not/AZone");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().path("message").asText())
+                .containsIgnoringCase("tz")
+                .containsIgnoringCase("timezone");
+    }
+
+    private void seedTiltData() {
+        seedPlayer("tiltuser");
+        String[] results = {
+                "win", "win", "win", "win", "win", "win", "loss", "loss", "loss",
+                "loss", "loss", "win", "win", "loss", "loss", "win", "win", "win"
+        };
+        int rating = 1500;
+        for (int i = 0; i < results.length; i++) {
+            boolean firstSession = i < 12;
+            int withinSession = firstSession ? i : i - 12;
+            int hour = firstSession ? 12 : 16;
+            OffsetDateTime playedAt = OffsetDateTime.of(
+                    2024, 1, 1, hour, 0, 0, 0, ZoneOffset.UTC
+            ).plusMinutes(withinSession * 10L);
+            String result = results[i];
+            insertGame(
+                    "tilt-" + (i + 1),
+                    "rapid",
+                    playedAt,
+                    "white",
+                    result,
+                    "win".equals(result) ? "checkmate" : "resign",
+                    rating,
+                    null,
+                    movesSan(24)
+            );
+            rating += "win".equals(result) ? 5 : -5;
+        }
+    }
+
     private void seedTimeControlsData() {
         seedPlayer(TC_PLAYER);
 
