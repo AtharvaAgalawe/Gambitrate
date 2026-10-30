@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: gambitrate
+    runtime: docker
+    plan: free
+    healthCheckPath: /actuator/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_HOST
+        fromDatabase:
+          name: gambitrate-db
+          property: host
+      - key: DATABASE_PORT
+        fromDatabase:
+          name: gambitrate-db
+          property: port
+      - key: DATABASE_NAME
+        fromDatabase:
+          name: gambitrate-db
+          property: database
+      - key: DATABASE_USER
+        fromDatabase:
+          name: gambitrate-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: gambitrate-db
+          property: password
+      - key: REDIS_HOST
+        fromService:
+          type: keyvalue
+          name: gambitrate-cache
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: keyvalue
+          name: gambitrate-cache
+          property: port
+      - key: CHESSCOM_USER_AGENT
+        sync: false
+
+  - type: keyvalue
+    name: gambitrate-cache
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: gambitrate-db
+    plan: free
+    databaseName: gambitrate
+    user: gambitrate
+    postgresMajorVersion: "16"
