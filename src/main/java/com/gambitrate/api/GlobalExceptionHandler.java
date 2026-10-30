@@ -5,6 +5,8 @@ import com.gambitrate.ingest.ChessComRateLimitException;
 import com.gambitrate.ingest.ChessComUpstreamException;
 import com.gambitrate.ingest.PgnParseException;
 import com.gambitrate.ingest.PlayerNotFoundException;
+import com.gambitrate.service.InvalidFilterException;
+import com.gambitrate.service.PlayerNotSyncedException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.Instant;
 import java.util.stream.Collectors;
@@ -30,6 +33,34 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(PlayerNotFoundException.class)
     ResponseEntity<ApiError> handlePlayerNotFound(PlayerNotFoundException exception, HttpServletRequest request) {
         return error(HttpStatus.NOT_FOUND, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(PlayerNotSyncedException.class)
+    ResponseEntity<ApiError> handlePlayerNotSynced(
+            PlayerNotSyncedException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(InvalidFilterException.class)
+    ResponseEntity<ApiError> handleInvalidFilter(
+            InvalidFilterException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.BAD_REQUEST, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<ApiError> handleTypeMismatch(
+            MethodArgumentTypeMismatchException exception,
+            HttpServletRequest request
+    ) {
+        return error(
+                HttpStatus.BAD_REQUEST,
+                "Invalid value for query parameter '" + exception.getName() + "'.",
+                request
+        );
     }
 
     @ExceptionHandler(ChessComRateLimitException.class)
