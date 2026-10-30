@@ -462,6 +462,149 @@ class Phase4AnalyticsIT {
         assertThat(body.path("message").asText()).contains("No months matched");
     }
 
+    @Test
+    void summary_returnsTopThreeLeaksRankedByEstimatedRatingImpact() {
+        seedSummaryData();
+
+        JsonNode body = get("/api/players/summaryuser/summary").getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.path("filters").path("timezone").asText()).isEqualTo("UTC");
+        assertThat(body.path("leaks")).hasSize(3);
+
+        JsonNode postLoss = body.path("leaks").get(0);
+        assertThat(postLoss.path("rank").asInt()).isEqualTo(1);
+        assertThat(postLoss.path("area").asText()).isEqualTo("postLoss");
+        assertThat(postLoss.path("sampleSize").asLong()).isEqualTo(14);
+        assertThat(postLoss.path("estimatedRatingImpact").asDouble())
+                .isCloseTo(98.89, within(0.01));
+        assertThat(postLoss.path("evidence").path("winRate").asDouble())
+                .isCloseTo(0.0714, within(0.0001));
+        assertThat(postLoss.path("evidence").path("baselineWinRate").asDouble())
+                .isCloseTo(0.7778, within(0.0001));
+        assertThat(postLoss.path("evidence").path("baselineSampleSize").asLong()).isEqualTo(9);
+        assertThat(postLoss.path("explanation").asText())
+                .contains("After a loss")
+                .contains("two-proportion guard");
+
+        JsonNode opening = body.path("leaks").get(1);
+        assertThat(opening.path("rank").asInt()).isEqualTo(2);
+        assertThat(opening.path("area").asText()).isEqualTo("openings");
+        assertThat(opening.path("label").asText())
+                .contains("Scandinavian Defense")
+                .contains("B01");
+        assertThat(opening.path("sampleSize").asLong()).isEqualTo(10);
+        assertThat(opening.path("estimatedRatingImpact").asDouble())
+                .isCloseTo(40.0, within(0.01));
+        assertThat(opening.path("evidence").path("color").asText()).isEqualTo("white");
+        assertThat(opening.path("evidence").path("winRate").asDouble())
+                .isCloseTo(0.1, within(0.0001));
+        assertThat(opening.path("evidence").path("baselineWinRate").asDouble())
+                .isCloseTo(0.5, within(0.0001));
+        assertThat(opening.path("evidence").path("baselineSampleSize").asLong()).isEqualTo(20);
+
+        JsonNode timeClass = body.path("leaks").get(2);
+        assertThat(timeClass.path("rank").asInt()).isEqualTo(3);
+        assertThat(timeClass.path("area").asText()).isEqualTo("timeClass");
+        assertThat(timeClass.path("label").asText()).isEqualTo("Blitz results");
+        assertThat(timeClass.path("sampleSize").asLong()).isEqualTo(10);
+        assertThat(timeClass.path("estimatedRatingImpact").asDouble())
+                .isCloseTo(33.33, within(0.01));
+        assertThat(timeClass.path("evidence").path("timeClass").asText()).isEqualTo("blitz");
+        assertThat(timeClass.path("evidence").path("winRate").asDouble())
+                .isCloseTo(0.0, within(0.0001));
+        assertThat(timeClass.path("evidence").path("baselineWinRate").asDouble())
+                .isCloseTo(0.3333, within(0.0001));
+        assertThat(timeClass.path("evidence").path("baselineSampleSize").asLong()).isEqualTo(30);
+
+        for (JsonNode leak : body.path("leaks")) {
+            assertThat(leak.path("filters").path("minGames").asInt()).isEqualTo(5);
+            assertThat(leak.path("filters").path("timezone").asText()).isEqualTo("UTC");
+            assertThat(leak.path("sampleSize").asLong())
+                    .isEqualTo(leak.path("evidence").path("sampleSize").asLong());
+        }
+
+        assertThat(body.path("notes").toString()).contains("heuristic").contains("Trends");
+        assertThat(body.path("message").isNull()).isTrue();
+    }
+
+    @Test
+    void summary_returnsEmptyMessage_whenNoLeakPassesTheGuard() {
+        seedPlayer("summaryclean");
+        for (int i = 1; i <= 5; i++) {
+            insertGame(
+                    "clean-" + i,
+                    "rapid",
+                    playedAt(2024, 1, i, 12, 0),
+                    "white",
+                    "win",
+                    "checkmate",
+                    1500 + i * 5,
+                    null,
+                    movesSan(24)
+            );
+        }
+
+        JsonNode body = get("/api/players/summaryclean/summary").getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.path("leaks")).isEmpty();
+        assertThat(body.path("message").asText())
+                .contains("No statistically guarded leaks");
+    }
+
+    private void seedSummaryData() {
+        seedPlayer("summaryuser");
+
+        for (int i = 0; i < 10; i++) {
+            insertGameWithOpening(
+                    "summary-b01-" + i,
+                    "rapid",
+                    playedAt(2024, 1, 1, 12, 0).plusMinutes(i * 10L),
+                    "white",
+                    i == 0 ? "win" : "loss",
+                    i == 0 ? "checkmate" : "resign",
+                    1500 - i * 5,
+                    "B01",
+                    "Scandinavian Defense",
+                    movesSan(64)
+            );
+        }
+        for (int i = 0; i < 10; i++) {
+            insertGameWithOpening(
+                    "summary-c50-" + i,
+                    "rapid",
+                    playedAt(2024, 1, 2, 12, 0).plusMinutes(i * 10L),
+                    "white",
+                    i == 1 ? "loss" : "win",
+                    i == 1 ? "resign" : "checkmate",
+                    1550 + i * 5,
+                    "C50",
+                    "Italian Game",
+                    movesSan(24)
+            );
+        }
+        int blitzIndex = 0;
+        for (int day = 3; day <= 7; day++) {
+            int hour = 18 + (day - 3);
+            for (int pair = 0; pair < 2; pair++) {
+                insertGameWithOpening(
+                        "summary-blitz-" + blitzIndex,
+                        "blitz",
+                        playedAt(2024, 1, day, hour, pair * 10),
+                        "black",
+                        "loss",
+                        "resign",
+                        1400 - blitzIndex * 5,
+                        "D00",
+                        "Queen's Pawn Game",
+                        movesSan(24)
+                );
+                blitzIndex++;
+            }
+        }
+    }
+
     private void seedTrendData() {
         seedPlayer("trenduser");
         insertGame("trend-dec-1", "rapid", playedAt(2023, 12, 1, 12, 0),
@@ -626,6 +769,41 @@ class Phase4AnalyticsIT {
                 rating == null ? null : rating + 50,
                 movesSan,
                 accuracy
+        );
+    }
+
+    private long insertGameWithOpening(
+            String chesscomId,
+            String timeClass,
+            OffsetDateTime playedAt,
+            String color,
+            String result,
+            String termination,
+            Integer rating,
+            String ecoCode,
+            String openingName,
+            String movesSan
+    ) {
+        return jdbcTemplate.queryForObject("""
+                INSERT INTO game (
+                    chesscom_id, player_id, played_at, time_class, time_control,
+                    base_seconds, increment_seconds, color, result, termination,
+                    player_rating, opponent_rating, eco_code, opening_name, moves_san, pgn
+                )
+                VALUES (?, 1, ?, ?, '600+5', 600, 5, ?, ?, ?, ?, ?, ?, ?, ?, '')
+                RETURNING id
+                """, Long.class,
+                chesscomId,
+                playedAt,
+                timeClass,
+                color,
+                result,
+                termination,
+                rating,
+                rating == null ? null : rating + 50,
+                ecoCode,
+                openingName,
+                movesSan
         );
     }
 

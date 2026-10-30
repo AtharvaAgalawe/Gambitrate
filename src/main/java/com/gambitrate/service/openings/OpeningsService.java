@@ -38,9 +38,14 @@ public class OpeningsService {
     @Transactional(readOnly = true)
     public OpeningsAnalysis analyze(String rawUsername, OpeningsQuery query) {
         String username = normalizeUsername(rawUsername);
-        validate(query);
         Player player = playerRepository.findByUsername(username)
                 .orElseThrow(() -> new PlayerNotSyncedException(username));
+        return analyze(player, query);
+    }
+
+    @Transactional(readOnly = true)
+    public OpeningsAnalysis analyze(Player player, OpeningsQuery query) {
+        validate(query);
 
         OffsetDateTime from = query.from() == null
                 ? null
@@ -68,7 +73,7 @@ public class OpeningsService {
                 ? "No openings matched the requested filters and minimum game count."
                 : null;
 
-        return new OpeningsAnalysis(username, query, groups, message);
+        return new OpeningsAnalysis(player.getUsername(), query, groups, message);
     }
 
     private OpeningGroup toOpeningGroup(OpeningGroupStats stats) {
