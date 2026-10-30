@@ -7,6 +7,7 @@ import com.gambitrate.ingest.PgnParseException;
 import com.gambitrate.ingest.PlayerNotFoundException;
 import com.gambitrate.service.InvalidFilterException;
 import com.gambitrate.service.PlayerNotSyncedException;
+import com.gambitrate.service.SyncJobNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -38,6 +39,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(PlayerNotSyncedException.class)
     ResponseEntity<ApiError> handlePlayerNotSynced(
             PlayerNotSyncedException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(SyncJobNotFoundException.class)
+    ResponseEntity<ApiError> handleSyncJobNotFound(
+            SyncJobNotFoundException exception,
             HttpServletRequest request
     ) {
         return error(HttpStatus.NOT_FOUND, exception.getMessage(), request);

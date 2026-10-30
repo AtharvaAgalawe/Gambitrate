@@ -5,12 +5,16 @@ import com.gambitrate.domain.Player;
 import com.gambitrate.ingest.dto.MonthlyGame;
 import com.gambitrate.ingest.dto.MonthlyGamesResponse;
 import com.gambitrate.repository.PlayerRepository;
+import com.gambitrate.service.PlayerNotSyncedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -26,33 +30,45 @@ public class PlayerSyncService {
     private final GameFactory gameFactory;
     private final MonthPersistenceService monthPersistenceService;
     private final PlayerRepository playerRepository;
+    private final Clock clock;
 
     public PlayerSyncService(
             ChessComClient chessComClient,
             PgnParser pgnParser,
             GameFactory gameFactory,
             MonthPersistenceService monthPersistenceService,
-            PlayerRepository playerRepository
+            PlayerRepository playerRepository,
+            Clock clock
     ) {
         this.chessComClient = chessComClient;
         this.pgnParser = pgnParser;
         this.gameFactory = gameFactory;
         this.monthPersistenceService = monthPersistenceService;
         this.playerRepository = playerRepository;
+        this.clock = clock;
     }
 
-    public SyncSummary sync(String rawUsername) {
+    public SyncSummary sync(String rawUsername, SyncProgressListener progress) {
         String username = normalizeUsername(rawUsername);
         long started = System.nanoTime();
         log.info("sync_started username={}", username);
 
         List<String> archiveUrls = chessComClient.getArchives(username);
-        List<ArchiveMonth> archives = archiveUrls.stream()
+        List<ArchiveMonth> allArchives = archiveUrls.stream()
                 .map(PlayerSyncService::toArchiveMonth)
                 .sorted(Comparator.comparing(ArchiveMonth::month))
                 .toList();
 
-        Player player = findOrCreatePlayer(username);
+        Player player = playerRepository.findByUsername(username)
+                .orElseThrow(() -> new PlayerNotSyncedException(username));
+        YearMonth currentMonth = YearMonth.now(clock.withZone(ZoneOffset.UTC));
+        List<ArchiveMonth> archives = allArchives.stream()
+                .filter(archive -> shouldFetch(archive.month(), player.getLastSyncedMonth(), currentMonth))
+                .toList();
+
+        progress.monthsDiscovered(archives.size());
+        log.info("sync_months_selected username={} available={} selected={} current_month={}",
+                username, allArchives.size(), archives.size(), currentMonth);
 
         int monthsProcessed = 0;
         int gamesSeen = 0;
@@ -62,7 +78,11 @@ public class PlayerSyncService {
         long movesImported = 0;
 
         for (ArchiveMonth archive : archives) {
-            MonthlyGamesResponse month = chessComClient.getGamesForMonth(archive.url());
+            MonthlyGamesResponse month = chessComClient.getGamesForMonth(
+                    archive.url(),
+                    archive.month(),
+                    currentMonth
+            );
             List<MonthlyGame> sourceGames = month.games() == null ? List.of() : month.games();
             List<Game> parsedGames = new ArrayList<>();
 
@@ -82,11 +102,20 @@ public class PlayerSyncService {
             gamesImported += result.imported();
             gamesSkippedExisting += result.skipped();
             movesImported += result.movesImported();
+
+            Instant newestGame = parsedGames.stream()
+                    .map(Game::getPlayedAt)
+                    .max(Instant::compareTo)
+                    .orElse(null);
+            player.markSynced(Instant.now(clock), archive.month().toString(), newestGame);
+            playerRepository.save(player);
+            progress.monthCompleted(monthsProcessed);
         }
 
-        String lastSyncedMonth = archives.isEmpty() ? null : archives.get(archives.size() - 1).month();
-        player.markSynced(Instant.now(), lastSyncedMonth);
-        playerRepository.save(player);
+        if (archives.isEmpty()) {
+            player.markSynced(Instant.now(clock), player.getLastSyncedMonth(), player.getLastGameEndTime());
+            playerRepository.save(player);
+        }
 
         log.info("sync_finished username={} months={} games_seen={} games_imported={} "
                         + "games_skipped_existing={} variants_skipped={} moves_imported={} latency_ms={}",
@@ -104,13 +133,15 @@ public class PlayerSyncService {
         );
     }
 
-    private Player findOrCreatePlayer(String username) {
-        return playerRepository.findByUsername(username)
-                .orElseGet(() -> playerRepository.save(new Player(username)));
-    }
-
     public static String normalizeUsername(String username) {
         return username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean shouldFetch(YearMonth month, String lastSyncedMonth, YearMonth currentMonth) {
+        if (month.equals(currentMonth)) {
+            return true;
+        }
+        return lastSyncedMonth == null || !month.isBefore(YearMonth.parse(lastSyncedMonth));
     }
 
     private static ArchiveMonth toArchiveMonth(String url) {
@@ -120,16 +151,16 @@ public class PlayerSyncService {
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Archive URL has no year/month: " + url);
             }
-            String month = parts[parts.length - 2] + "-" + parts[parts.length - 1];
-            if (!month.matches("\\d{4}-\\d{2}")) {
-                throw new IllegalArgumentException("Archive URL has an invalid year/month: " + url);
-            }
+            YearMonth month = YearMonth.of(
+                    Integer.parseInt(parts[parts.length - 2]),
+                    Integer.parseInt(parts[parts.length - 1])
+            );
             return new ArchiveMonth(url, month);
         } catch (RuntimeException exception) {
             throw new ChessComUpstreamException("Chess.com returned an invalid archive URL: " + url, exception);
         }
     }
 
-    private record ArchiveMonth(String url, String month) {
+    private record ArchiveMonth(String url, YearMonth month) {
     }
 }

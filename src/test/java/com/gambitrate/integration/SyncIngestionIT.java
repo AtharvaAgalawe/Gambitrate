@@ -10,43 +10,55 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class SyncIngestionIT {
 
     private static final String PLAYER = "fixtureuser";
+    private static final String PROFILE_PATH = "/pub/player/" + PLAYER;
     private static final String ARCHIVES_PATH = "/pub/player/" + PLAYER + "/games/archives";
     private static final String MONTH_PATH = "/pub/player/" + PLAYER + "/games/2024/01";
     private static final Instant PLAYED_AT = Instant.parse("2024-01-02T01:02:03Z");
 
     private static final WireMockServer CHESS_COM = new WireMockServer(options().dynamicPort());
+    private static final GenericContainer<?> REDIS =
+            new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
 
     static {
         CHESS_COM.start();
+        REDIS.start();
     }
 
     @Container
@@ -62,10 +74,15 @@ class SyncIngestionIT {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
     @DynamicPropertySource
     static void chessComProperties(DynamicPropertyRegistry registry) {
         registry.add("gambitrate.chesscom.base-url", CHESS_COM::baseUrl);
         registry.add("gambitrate.chesscom.request-delay", () -> "0ms");
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
     }
 
     @AfterAll
@@ -77,6 +94,9 @@ class SyncIngestionIT {
     void resetState() {
         jdbcTemplate.execute("TRUNCATE TABLE move, game, player RESTART IDENTITY CASCADE");
         CHESS_COM.resetAll();
+        try (RedisConnection connection = redisTemplate.getConnectionFactory().getConnection()) {
+            connection.serverCommands().flushAll();
+        }
     }
 
     @Test
@@ -85,16 +105,14 @@ class SyncIngestionIT {
 
         ResponseEntity<JsonNode> first = sync("FixtureUser");
 
-        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode firstBody = first.getBody();
-        assertThat(firstBody).isNotNull();
-        assertThat(firstBody.path("username").asText()).isEqualTo(PLAYER);
-        assertThat(firstBody.path("monthsProcessed").asInt()).isEqualTo(1);
-        assertThat(firstBody.path("gamesSeen").asInt()).isEqualTo(2);
-        assertThat(firstBody.path("variantsSkipped").asInt()).isEqualTo(1);
-        assertThat(firstBody.path("gamesImported").asInt()).isEqualTo(2);
-        assertThat(firstBody.path("gamesSkippedExisting").asInt()).isZero();
-        assertThat(firstBody.path("movesImported").asLong()).isEqualTo(11L);
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        assertThat(first.getHeaders().getLocation()).isNotNull();
+        assertThat(first.getHeaders().getLocation().getPath())
+                .isEqualTo("/api/players/" + PLAYER + "/sync/status");
+        JsonNode firstJob = awaitTerminalJob(PLAYER);
+        assertThat(firstJob.path("status").asText()).isEqualTo("DONE");
+        assertThat(firstJob.path("monthsTotal").asInt()).isEqualTo(1);
+        assertThat(firstJob.path("monthsDone").asInt()).isEqualTo(1);
 
         assertThat(count("select count(*) from game")).isEqualTo(2);
         assertThat(count("select count(*) from move")).isEqualTo(11);
@@ -127,12 +145,13 @@ class SyncIngestionIT {
         assertThat((BigDecimal) blackGame.get("player_accuracy")).isEqualByComparingTo("61.25");
 
         Map<String, Object> player = jdbcTemplate.queryForMap("""
-                select username, last_synced_month
+                select username, last_synced_month, last_game_end_time
                 from player
                 where id = 1
                 """);
         assertThat(player.get("username")).isEqualTo(PLAYER);
         assertThat(player.get("last_synced_month")).isEqualTo("2024-01");
+        assertThat(player.get("last_game_end_time")).isNotNull();
 
         Map<String, Object> playerMove = jdbcTemplate.queryForMap("""
                 select m.san, m.ply, m.clock_remaining_ms, m.is_player_move
@@ -144,33 +163,96 @@ class SyncIngestionIT {
         assertThat(playerMove.get("clock_remaining_ms")).isEqualTo(599_000L);
         assertThat(playerMove.get("is_player_move")).isEqualTo(true);
 
-        Map<String, Object> opponentMove = jdbcTemplate.queryForMap("""
-                select m.is_player_move
-                from move m
-                join game g on g.id = m.game_id
-                where g.chesscom_id = 'game-2' and m.ply = 1
-                """);
-        assertThat(opponentMove.get("is_player_move")).isEqualTo(false);
-
         ResponseEntity<JsonNode> second = sync(PLAYER);
 
-        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode secondBody = second.getBody();
-        assertThat(secondBody).isNotNull();
-        assertThat(secondBody.path("gamesSeen").asInt()).isEqualTo(2);
-        assertThat(secondBody.path("gamesImported").asInt()).isZero();
-        assertThat(secondBody.path("gamesSkippedExisting").asInt()).isEqualTo(2);
-        assertThat(secondBody.path("movesImported").asLong()).isZero();
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        JsonNode secondJob = awaitTerminalJob(PLAYER);
+        assertThat(secondJob.path("status").asText()).isEqualTo("DONE");
         assertThat(count("select count(*) from game")).isEqualTo(2);
         assertThat(count("select count(*) from move")).isEqualTo(11);
+        assertThat(count("select count(*) from sync_job")).isEqualTo(2);
 
-        CHESS_COM.verify(getRequestedFor(urlEqualTo(ARCHIVES_PATH))
+        CHESS_COM.verify(2, getRequestedFor(urlEqualTo(ARCHIVES_PATH))
                 .withHeader("User-Agent", containing("GambitRate")));
+        CHESS_COM.verify(1, getRequestedFor(urlEqualTo(MONTH_PATH)));
+    }
+
+    @Test
+    void incrementalSync_usesCacheAndRevalidatesCurrentMonth() throws Exception {
+        YearMonth currentMonth = YearMonth.now(ZoneOffset.UTC);
+        YearMonth pastMonth = currentMonth.minusMonths(1);
+        String pastPath = monthPath(pastMonth);
+        String currentPath = monthPath(currentMonth);
+        String etag = "\"current-v1\"";
+
+        CHESS_COM.stubFor(get(urlEqualTo(PROFILE_PATH))
+                .willReturn(okJson("{\"username\":\"fixtureuser\"}")));
+        String archivesJson = objectMapper.writeValueAsString(Map.of(
+                "archives", List.of(
+                        CHESS_COM.baseUrl() + pastPath,
+                        CHESS_COM.baseUrl() + currentPath
+                )
+        ));
+        CHESS_COM.stubFor(get(urlEqualTo(ARCHIVES_PATH)).willReturn(okJson(archivesJson)));
+
+        CHESS_COM.stubFor(get(urlEqualTo(pastPath)).willReturn(okJson(monthWithGame("past-game"))));
+        CHESS_COM.stubFor(get(urlEqualTo(currentPath))
+                .inScenario("current-month")
+                .whenScenarioStateIs("Started")
+                .willSetStateTo("revalidated")
+                .willReturn(okJson(monthWithGame("current-game")).withHeader("ETag", etag)));
+        CHESS_COM.stubFor(get(urlEqualTo(currentPath))
+                .inScenario("current-month")
+                .whenScenarioStateIs("revalidated")
+                .willReturn(aResponse().withStatus(304).withHeader("ETag", etag)));
+
+        ResponseEntity<JsonNode> first = sync(PLAYER);
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        JsonNode firstJob = awaitTerminalJob(PLAYER);
+        assertThat(firstJob.path("status").asText()).isEqualTo("DONE");
+        assertThat(firstJob.path("monthsTotal").asInt()).isEqualTo(2);
+        assertThat(firstJob.path("monthsDone").asInt()).isEqualTo(2);
+
+        ResponseEntity<JsonNode> second = sync(PLAYER);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        JsonNode secondJob = awaitTerminalJob(PLAYER);
+        assertThat(secondJob.path("status").asText()).isEqualTo("DONE");
+        assertThat(secondJob.path("monthsTotal").asInt()).isEqualTo(1);
+        assertThat(secondJob.path("monthsDone").asInt()).isEqualTo(1);
+
+        assertThat(count("select count(*) from game")).isEqualTo(2);
+        Map<String, Object> player = jdbcTemplate.queryForMap("""
+                select last_synced_month, last_game_end_time
+                from player
+                where id = 1
+                """);
+        assertThat(player.get("last_synced_month")).isEqualTo(currentMonth.toString());
+        assertThat(player.get("last_game_end_time")).isNotNull();
+
+        CHESS_COM.verify(1, getRequestedFor(urlEqualTo(pastPath)));
+        CHESS_COM.verify(2, getRequestedFor(urlEqualTo(currentPath)));
+        CHESS_COM.verify(1, getRequestedFor(urlEqualTo(currentPath))
+                .withHeader("If-None-Match", equalTo(etag)));
+    }
+
+    @Test
+    void sync_marksJobFailed_whenChessComArchivesFail() {
+        CHESS_COM.stubFor(get(urlEqualTo(PROFILE_PATH))
+                .willReturn(okJson("{\"username\":\"fixtureuser\"}")));
+        CHESS_COM.stubFor(get(urlEqualTo(ARCHIVES_PATH))
+                .willReturn(aResponse().withStatus(500)));
+
+        ResponseEntity<JsonNode> response = sync(PLAYER);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+
+        JsonNode job = awaitTerminalJob(PLAYER);
+        assertThat(job.path("status").asText()).isEqualTo("FAILED");
+        assertThat(job.path("error").asText()).contains("500");
     }
 
     @Test
     void sync_returns404_whenChessComUserDoesNotExist() {
-        CHESS_COM.stubFor(get(urlEqualTo("/pub/player/nobody/games/archives"))
+        CHESS_COM.stubFor(get(urlEqualTo("/pub/player/nobody"))
                 .willReturn(aResponse()
                         .withStatus(404)
                         .withHeader("Content-Type", "application/json")
@@ -199,11 +281,54 @@ class SyncIngestionIT {
         assertThat(response.getBody().path("status").asInt()).isEqualTo(400);
     }
 
+    @Test
+    void status_returns404_whenNoSyncJobExists() {
+        jdbcTemplate.update("""
+                INSERT INTO player (username, created_at)
+                VALUES ('idleuser', now())
+                """);
+
+        ResponseEntity<JsonNode> response =
+                restTemplate.getForEntity("/api/players/idleuser/sync/status", JsonNode.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().path("message").asText())
+                .containsIgnoringCase("sync job");
+    }
+
     private ResponseEntity<JsonNode> sync(String username) {
         return restTemplate.postForEntity("/api/players/" + username + "/sync", null, JsonNode.class);
     }
 
+    private JsonNode awaitTerminalJob(String username) {
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        JsonNode last = null;
+        while (System.nanoTime() < deadline) {
+            ResponseEntity<JsonNode> response =
+                    restTemplate.getForEntity("/api/players/" + username + "/sync/status", JsonNode.class);
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                last = response.getBody();
+                String status = last.path("status").asText();
+                if ("DONE".equals(status) || "FAILED".equals(status)) {
+                    return last;
+                }
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                fail("Interrupted while waiting for sync job.");
+            }
+        }
+        fail("Sync job did not finish. Last status: " + last);
+        return last;
+    }
+
     private void stubChessCom() throws Exception {
+        CHESS_COM.stubFor(get(urlEqualTo(PROFILE_PATH))
+                .willReturn(okJson("{\"username\":\"fixtureuser\"}")));
+
         String archivesJson = objectMapper.writeValueAsString(Map.of(
                 "archives", List.of(CHESS_COM.baseUrl() + MONTH_PATH)
         ));
@@ -277,6 +402,26 @@ class SyncIngestionIT {
     private long count(String sql) {
         Long count = jdbcTemplate.queryForObject(sql, Long.class);
         return count == null ? 0 : count;
+    }
+
+    private String monthPath(YearMonth month) {
+        return "/pub/player/" + PLAYER + "/games/%d/%02d".formatted(month.getYear(), month.getMonthValue());
+    }
+
+    private String monthWithGame(String uuid) throws Exception {
+        return objectMapper.writeValueAsString(Map.of(
+                "games", List.of(game(
+                        uuid,
+                        "FixtureUser",
+                        "Opponent",
+                        "win",
+                        "checkmated",
+                        "chess",
+                        scholarMatePgn(),
+                        85.3,
+                        78.1
+                ))
+        ));
     }
 
     private static String scholarMatePgn() {

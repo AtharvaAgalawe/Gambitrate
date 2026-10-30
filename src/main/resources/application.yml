@@ -2,9 +2,15 @@ spring:
   application:
     name: gambitrate
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/gambitrate}
-    username: ${DATABASE_USERNAME:gambitrate}
+    url: jdbc:postgresql://${DATABASE_HOST:localhost}:${DATABASE_PORT:5432}/${DATABASE_NAME:gambitrate}
+    username: ${DATABASE_USER:gambitrate}
     password: ${DATABASE_PASSWORD:gambitrate}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
   jpa:
     open-in-view: false
     hibernate:
@@ -35,6 +41,17 @@ gambitrate:
     user-agent: "${CHESSCOM_USER_AGENT:GambitRate/1.0 (contact: you@example.com)}"
     request-delay: ${CHESSCOM_REQUEST_DELAY:250ms}
     max-attempts: ${CHESSCOM_MAX_ATTEMPTS:4}
+    past-month-ttl: ${CHESSCOM_PAST_MONTH_TTL:3650d}
+    current-month-ttl: ${CHESSCOM_CURRENT_MONTH_TTL:5m}
+    archives-ttl: ${CHESSCOM_ARCHIVES_TTL:5m}
+    etag-ttl: ${CHESSCOM_ETAG_TTL:7d}
+    host-lock-lease: ${CHESSCOM_HOST_LOCK_LEASE:2m}
+    host-lock-wait: ${CHESSCOM_HOST_LOCK_WAIT:60s}
+  sync:
+    stale-after: ${SYNC_STALE_AFTER:2h}
+    scheduler:
+      fixed-delay: ${SYNC_FIXED_DELAY:1h}
+      initial-delay: ${SYNC_INITIAL_DELAY:10m}
 
 logging:
   level:

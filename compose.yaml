@@ -30,9 +30,13 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: jdbc:postgresql://postgres:5432/gambitrate
-      DATABASE_USERNAME: gambitrate
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: gambitrate
+      DATABASE_USER: gambitrate
       DATABASE_PASSWORD: gambitrate
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       CHESSCOM_USER_AGENT: "GambitRate/1.0 (contact: you@example.com)"
     depends_on:
       postgres:

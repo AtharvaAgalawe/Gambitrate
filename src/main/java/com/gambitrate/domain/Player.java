@@ -29,6 +29,9 @@ public class Player {
     @Column(name = "last_synced_month", length = 7)
     private String lastSyncedMonth;
 
+    @Column(name = "last_game_end_time")
+    private Instant lastGameEndTime;
+
     protected Player() {
     }
 
@@ -37,9 +40,13 @@ public class Player {
         this.createdAt = Instant.now();
     }
 
-    public void markSynced(Instant syncedAt, String month) {
+    public void markSynced(Instant syncedAt, String month, Instant lastGameEndTime) {
         this.lastSyncedAt = syncedAt;
         this.lastSyncedMonth = month;
+        if (lastGameEndTime != null
+                && (this.lastGameEndTime == null || lastGameEndTime.isAfter(this.lastGameEndTime))) {
+            this.lastGameEndTime = lastGameEndTime;
+        }
     }
 
     public Long getId() {
@@ -60,5 +67,9 @@ public class Player {
 
     public String getLastSyncedMonth() {
         return lastSyncedMonth;
+    }
+
+    public Instant getLastGameEndTime() {
+        return lastGameEndTime;
     }
 }
