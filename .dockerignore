@@ -1,0 +1,10 @@
+target/
+.git/
+.idea/
+.vscode/
+*.log
+.env
+.env.*
+README.md
+AGENTS.md
+PRD.md

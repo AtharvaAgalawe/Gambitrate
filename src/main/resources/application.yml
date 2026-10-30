@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: gambitrate
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/gambitrate}
+    username: ${DATABASE_USERNAME:gambitrate}
+    password: ${DATABASE_PASSWORD:gambitrate}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+gambitrate:
+  chesscom:
+    base-url: ${CHESSCOM_BASE_URL:https://api.chess.com}
+    user-agent: "${CHESSCOM_USER_AGENT:GambitRate/1.0 (contact: you@example.com)}"
+    request-delay: ${CHESSCOM_REQUEST_DELAY:250ms}
+    max-attempts: ${CHESSCOM_MAX_ATTEMPTS:4}
+
+logging:
+  level:
+    com.gambitrate.ingest: INFO
