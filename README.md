@@ -2,7 +2,7 @@
 
 GambitRate ingests a public chess.com player's games and turns them into opinionated answers about what is hurting their rating. It is **not** a game viewer. Every analytics endpoint ends in numbers and a verdict.
 
-**Current status: Phase 3 complete and deployed.** The live service is at **[gambitrate.onrender.com](https://gambitrate.onrender.com)**. Async sync jobs, Redis caching, incremental sync, ETag revalidation, the distributed outbound gate, and the scheduled sweep are in place. A single-page dashboard for sync and opening analysis is included ahead of Phase 5.
+**Current status: Phase 4 complete in code.** The live service is at **[gambitrate.onrender.com](https://gambitrate.onrender.com)**; Phase 4 is only considered live after the deployment metadata and Render service branch are checked post-push. Async sync jobs, Redis caching, incremental sync, ETag revalidation, the distributed outbound gate, and the scheduled sweep are in place. The Phase 4 analytics endpoints are `/time-controls`, `/tilt`, `/trends`, and `/summary`. A single-page dashboard for sync and opening analysis is included ahead of Phase 5.
 
 ## Architecture
 
@@ -63,6 +63,19 @@ GET /api/players/{username}/openings
 ```
 
 Analytics do not load a player's games into Java. PostgreSQL computes the groups and aggregates; Java only applies the verdict and sorting rules to the small result set.
+
+Phase 4 adds three more SQL-first paths:
+
+```text
+GET /time-controls -> TimeControlsService -> TimeControlAnalyticsRepository
+GET /tilt          -> TiltService          -> TiltAnalyticsRepository
+GET /trends        -> TrendsService        -> TrendAnalyticsRepository
+GET /summary       -> SummaryService       -> guarded openings + time-controls + tilt results
+```
+
+`/tilt` uses window functions for session number, previous result, rating change, and
+session game index. `/trends` groups UTC calendar months in PostgreSQL. `/summary`
+does not load game history; it ranks the small, already-guarded result sets.
 
 ## Stack
 
@@ -230,6 +243,318 @@ Example response, reduced to one group:
 - Groups below `minGames` are hidden. If no groups qualify, the endpoint returns `200` with an empty `openings` array and an explanatory `message`.
 - Results are sorted by `estimatedRatingCost` descending. The verdict, not the cost alone, decides whether a group is actionable.
 
+## Time controls and clock coverage
+
+```bash
+curl "http://localhost:8080/api/players/YOUR_CHESSCOM_USERNAME/time-controls?timeClass=rapid&minGames=5"
+```
+
+Reduced response:
+
+```json
+{
+  "username": "exampleuser",
+  "filters": {
+    "from": null,
+    "to": null,
+    "timeClass": "rapid",
+    "minGames": 5,
+    "timezone": null
+  },
+  "overall": {
+    "games": 120,
+    "wins": 55,
+    "draws": 20,
+    "losses": 45,
+    "winRate": 0.4583
+  },
+  "byTimeClass": [
+    {
+      "timeClass": "rapid",
+      "games": 120,
+      "wins": 55,
+      "draws": 20,
+      "losses": 45,
+      "winRate": 0.4583
+    }
+  ],
+  "byGameLength": [
+    {
+      "bucket": "20-39",
+      "label": "20-39 moves",
+      "games": 35,
+      "wins": 14,
+      "draws": 6,
+      "losses": 15,
+      "winRate": 0.4
+    }
+  ],
+  "lossTerminations": [
+    {
+      "timeClass": "rapid",
+      "totalGames": 120,
+      "totalLosses": 45,
+      "timeout": { "losses": 10, "share": 0.2222 },
+      "checkmate": { "losses": 15, "share": 0.3333 },
+      "resign": { "losses": 18, "share": 0.4 },
+      "other": { "losses": 2, "share": 0.0444 }
+    }
+  ],
+  "clockAtMoves": [
+    {
+      "timeClass": "rapid",
+      "moveNumber": 10,
+      "gamesInTimeClass": 120,
+      "gamesWithClock": 100,
+      "coverage": 0.8333,
+      "averageClockRemainingMs": 345000,
+      "averageClockRemainingSeconds": 345.0
+    }
+  ],
+  "lossClocks": [
+    {
+      "timeClass": "rapid",
+      "totalLosses": 45,
+      "lossesWithClock": 40,
+      "coverage": 0.8889,
+      "over30s": 12,
+      "between10And30s": 8,
+      "under10s": 20,
+      "shareOver30s": 0.3,
+      "shareBetween10And30s": 0.2,
+      "shareUnder10s": 0.5
+    }
+  ],
+  "notes": [
+    "Game-length buckets use full moves: 1-19, 20-39, 40-59, 60-79, 80-99, and 100+.",
+    "Clock data is a time measurement, not evidence that a move was a blunder."
+  ],
+  "message": null
+}
+```
+
+- Game-length buckets are full moves: `1-19`, `20-39`, `40-59`, `60-79`, `80-99`, `100+`.
+- Clock at move N is the player's remaining clock **after their Nth own move**, not a move-quality claim.
+- Clock coverage is `gamesWithClock / gamesInTimeClass`. A game that never reaches move N lowers coverage instead of contributing a zero.
+- Loss-clock shares use losses with a recorded final player clock. `coverage` shows how many losses had that data.
+- Termination shares are fractions of all losses in that time class.
+- Groups below `minGames` are hidden.
+
+## Tilt and session performance
+
+```bash
+curl "http://localhost:8080/api/players/YOUR_CHESSCOM_USERNAME/tilt?tz=America/New_York&minGames=5"
+```
+
+Reduced response:
+
+```json
+{
+  "username": "exampleuser",
+  "filters": {
+    "from": null,
+    "to": null,
+    "timeClass": null,
+    "minGames": 5,
+    "timezone": "America/New_York"
+  },
+  "sessionGapMinutes": 30,
+  "overall": {
+    "games": 300,
+    "wins": 150,
+    "draws": 30,
+    "losses": 120,
+    "winRate": 0.5
+  },
+  "postLoss": {
+    "previousResult": "loss",
+    "games": 140,
+    "wins": 53,
+    "draws": 5,
+    "losses": 82,
+    "winRate": 0.3786,
+    "averageRatingChange": -3.2,
+    "ratingChangeSamples": 138
+  },
+  "postWin": {
+    "previousResult": "win",
+    "games": 138,
+    "wins": 72,
+    "draws": 12,
+    "losses": 54,
+    "winRate": 0.5217,
+    "averageRatingChange": 3.1,
+    "ratingChangeSamples": 136
+  },
+  "tiltScore": 14.31,
+  "sampleSufficient": true,
+  "significant": true,
+  "verdict": "After a loss, winrate drops to 37.9% from 52.2% after a win, a 14.3-point tilt signal over 140 post-loss and 138 post-win games.",
+  "bySessionIndex": [
+    {
+      "gameIndex": 1,
+      "games": 150,
+      "wins": 80,
+      "draws": 10,
+      "losses": 60,
+      "winRate": 0.5333
+    }
+  ],
+  "byHour": [
+    {
+      "hourOfDay": 21,
+      "games": 40,
+      "wins": 16,
+      "draws": 4,
+      "losses": 20,
+      "winRate": 0.4
+    }
+  ],
+  "byDay": [
+    {
+      "isoDayOfWeek": 1,
+      "day": "Monday",
+      "games": 50,
+      "wins": 20,
+      "draws": 5,
+      "losses": 25,
+      "winRate": 0.4
+    }
+  ],
+  "notes": [
+    "A session is consecutive games with a gap under 30 minutes; the gap is configurable.",
+    "Tilt score = (post-win winrate - post-loss winrate) x 100."
+  ],
+  "message": null
+}
+```
+
+- A new session starts at a gap of **30 minutes or more**. Set `TILT_SESSION_GAP` to change it.
+- `tiltScore` is percentage points; positive means worse after a loss.
+- A tilt verdict requires at least `minGames` after wins and after losses, plus a two-proportion 95% z-test.
+- `averageRatingChange` is the difference between consecutive pre-game ratings in the same time class; it reflects the previous result's rating effect. `ratingChangeSamples` exposes coverage.
+- Hour/day grouping uses PostgreSQL `AT TIME ZONE` with `tz`. Date filters remain UTC.
+- `tz` is validated with `ZoneId`; invalid values return `400`.
+
+## Monthly trends and accuracy coverage
+
+```bash
+curl "http://localhost:8080/api/players/YOUR_CHESSCOM_USERNAME/trends?timeClass=rapid&minGames=5"
+```
+
+Reduced response:
+
+```json
+{
+  "username": "exampleuser",
+  "filters": {
+    "from": null,
+    "to": null,
+    "timeClass": "rapid",
+    "minGames": 5,
+    "timezone": null
+  },
+  "accuracyCoverage": {
+    "gamesWithAccuracy": 24,
+    "totalGames": 60,
+    "coverage": 0.4
+  },
+  "months": [
+    {
+      "month": "2024-01",
+      "games": 30,
+      "wins": 15,
+      "draws": 5,
+      "losses": 10,
+      "winRate": 0.5,
+      "averageRating": 1512.5,
+      "ratingGames": 30,
+      "averageAccuracy": 85.0,
+      "accuracyGames": 12,
+      "accuracyCoverage": 0.4
+    }
+  ],
+  "notes": [
+    "Months are calendar months in UTC.",
+    "averageAccuracy is computed only from games where chess.com supplied accuracy."
+  ],
+  "message": null
+}
+```
+
+- Months are UTC calendar months and are sorted chronologically.
+- `averageRating` is the mean of non-null pre-game `player_rating` values; `ratingGames` exposes coverage.
+- Accuracy is sparse. `averageAccuracy` is never presented without `accuracyGames` and `accuracyCoverage`.
+- The top-level coverage is computed over the months that pass `minGames`.
+- Months below `minGames` are hidden.
+
+## Summary: the top three leaks
+
+```bash
+curl "http://localhost:8080/api/players/YOUR_CHESSCOM_USERNAME/summary?tz=America/New_York"
+```
+
+Reduced response:
+
+```json
+{
+  "username": "exampleuser",
+  "filters": {
+    "from": null,
+    "to": null,
+    "timeClass": null,
+    "minGames": 5,
+    "timezone": "America/New_York"
+  },
+  "leaks": [
+    {
+      "rank": 1,
+      "area": "postLoss",
+      "label": "After a loss",
+      "filters": {
+        "from": null,
+        "to": null,
+        "timeClass": null,
+        "minGames": 5,
+        "timezone": "America/New_York"
+      },
+      "sampleSize": 14,
+      "estimatedRatingImpact": 98.89,
+      "evidence": {
+        "color": null,
+        "ecoCode": null,
+        "openingName": null,
+        "timeClass": null,
+        "bucket": null,
+        "hourOfDay": null,
+        "day": null,
+        "sampleSize": 14,
+        "wins": 1,
+        "draws": 0,
+        "losses": 13,
+        "winRate": 0.0714,
+        "baselineWinRate": 0.7778,
+        "baselineSampleSize": 9,
+        "averageRatingChange": -5.0,
+        "ratingChangeSamples": 14
+      },
+      "explanation": "After a loss, winrate is 7.1% vs 77.8% after a win over 14 post-loss and 9 post-win games; the two-proportion guard is met."
+    }
+  ],
+  "notes": [
+    "Estimated rating impact = (baselineWinRate - groupWinRate) x games x 10. Positive means estimated Elo cost. This is a heuristic, not a chess.com rating calculation.",
+    "Trends is descriptive and does not produce a leak candidate."
+  ],
+  "message": null
+}
+```
+
+- Candidates come from statistically guarded openings, time classes, game-length buckets, post-loss tilt, and hour/day performance.
+- Impact is `(baselineWinRate - groupWinRate) × games × 10`. Opening baseline is the same-color winrate; time-class, game-length, hour, and day baselines are the overall filtered winrate; post-loss uses the post-win winrate.
+- Only positive, `minGames`-qualified, 95%-guarded candidates are ranked.
+- Every item repeats the request filters and exposes its sample size, baseline, and supporting numbers.
+- The estimate is a ranking heuristic, not a chess.com/Glicko rating calculation. `/trends` is descriptive and does not manufacture a leak.
+
 ## Dashboard
 
 The root URL serves a static one-page dashboard for the features that exist today:
@@ -242,7 +567,7 @@ The root URL serves a static one-page dashboard for the features that exist toda
 - Browse the opening table with sorting, a readable 20-row first page, and responsive cards on mobile.
 - Explain the sample guard, rating-delta method, and clock honesty in an expandable Method section.
 
-It deliberately does not show placeholder heatmaps, tilt, or trends. Those sections arrive only when their APIs exist.
+The dashboard still focuses on sync and openings. The Phase 4 APIs exist, but the matching time-control, tilt, trend, and summary charts are the Phase 5 frontend work.
 
 ## Configuration
 
@@ -271,6 +596,7 @@ All values have safe local defaults and can be overridden with environment varia
 | `SYNC_STALE_AFTER` | `2h` | Age after which a QUEUED/RUNNING job is treated as abandoned |
 | `SYNC_FIXED_DELAY` | `1h` | Scheduled re-sync interval |
 | `SYNC_INITIAL_DELAY` | `10m` | Delay before the first scheduled sweep |
+| `TILT_SESSION_GAP` | `30m` | Gap that starts a new tilt session |
 | `PORT` | `8080` | HTTP port |
 
 ## Tests
@@ -296,7 +622,12 @@ The integration tests start PostgreSQL and Redis with Testcontainers. `SyncInges
 - opening groups have exact win rates, draw rates, rating deltas, colors, baselines, verdicts, ordering, and estimated Elo costs;
 - date, time-class, `minGames`, and opening-line filters work;
 - a 5-game sample is not flagged, while a 10-game sample with the same winrate is;
-- unsynced players return `404`, reversed dates return `400`, and empty results return `200` with a message.
+- unsynced players return `404`, reversed dates return `400`, and empty results return `200` with a message;
+- time-control win rates, full-move buckets, termination shares, move-10/20/30 clock averages, coverage, and loss-clock shares match hand-calculated values;
+- tilt post-loss/post-win rates, rating changes, session indexes, the exact 30-minute session boundary, New York hour/day grouping, and the tiny-sample guard are asserted;
+- trends return exact monthly rating, win rate, game count, accuracy average, and accuracy coverage in chronological order;
+- summary ranks a post-loss leak, an opening leak, and a time-class leak by exact estimated impact, and every item carries filters, sample size, baseline, and evidence;
+- invalid timezones return `400`.
 
 No test calls the live chess.com API.
 
@@ -324,9 +655,21 @@ No test calls the live chess.com API.
 
 **Rating delta honesty.** chess.com's monthly payload does not include a post-game rating delta. `avgRatingDelta` is therefore the actual rating difference between consecutive games in the same time class, not an invented per-game Elo change. `ratingDeltaGames` exposes coverage, and the heuristic cost is labelled as an estimate.
 
-**Date and timezone boundary.** `from` and `to` are inclusive calendar dates interpreted in UTC. Timezone-sensitive hour/day analytics arrive in Phase 4 with an explicit `tz` parameter.
+**Date and timezone boundary.** `from` and `to` are inclusive calendar dates interpreted in UTC. Hour/day analytics use the explicit `tz` parameter and PostgreSQL `AT TIME ZONE`, so the conversion happens in SQL rather than in Java. `tz` is validated with `ZoneId`; invalid values return `400`. Date filters stay UTC so the same date range has one meaning across every endpoint.
 
-**Honesty about data.** Accuracy is nullable and stored exactly as reported by chess.com. Future aggregate responses must include coverage. No blunder claims will be made from clocks.
+**Game-length buckets.** Length is full moves, derived from the SAN token count: `1-19`, `20-39`, `40-59`, `60-79`, `80-99`, `100+`. The buckets are returned with a human label and are defined in the response notes.
+
+**Clock coverage, not clock blame.** Clock at move N is the remaining clock after the player's Nth own move, found with a windowed `ROW_NUMBER` over `move` rows. Coverage is games with a clock at N divided by games in that time class. A game that never reaches move N lowers coverage; it is never treated as a zero clock. The final-clock loss buckets are `>30s`, `10-30s` inclusive, and `<10s` among losses with clock data, with coverage against all losses. These are time-management proxies, not evidence that a move was bad.
+
+**Tilt sessions and score.** A session is a run of consecutive games with a gap under the configured threshold (30 minutes by default). A gap at or above the threshold starts a new session. The query computes session IDs, previous result, previous rating, and session game index with window functions. `tiltScore = (postWinWinRate - postLossWinRate) × 100`; positive means worse after a loss. A verdict requires `minGames` after both wins and losses and a two-proportion 95% z-test. The rating-change figure compares consecutive pre-game ratings in the same time class and exposes `ratingChangeSamples`.
+
+**Accuracy coverage.** chess.com accuracy is sparse. Monthly accuracy is `AVG(player_accuracy)` over non-null values only, and every monthly and top-level accuracy figure carries `gamesWithAccuracy`, `ratingGames`, and/or `coverage`. Accuracy is never returned without the contributing sample.
+
+**Summary ranking is a heuristic.** `/summary` considers guarded openings, time classes, game-length buckets, post-loss performance, and hour/day groups. Impact is `(baselineWinRate - groupWinRate) × games × 10`; positive means estimated Elo cost. Opening baseline is the same-color winrate; time-class/game-length/hour/day baselines are the overall filtered winrate; post-loss uses post-win. Only positive, `minGames`-qualified, 95%-guarded candidates are ranked. The value is explicitly an estimate, not a chess.com/Glicko calculation. Trends is descriptive and does not create a leak candidate.
+
+**Analytics indexes.** `(player_id, time_class, played_at)` supports time-class-filtered session and trend scans; `(game_id, is_player_move, ply)` supports the player-move clock windows. The existing `(player_id, played_at)` index remains the main filter path.
+
+**Honesty about data.** Accuracy is nullable and stored exactly as reported by chess.com. No blunder claims are made from clocks; that requires the optional Phase 6 engine.
 
 ## API errors
 
@@ -362,6 +705,6 @@ The service is live at **https://gambitrate.onrender.com**. `render.yaml` provis
 1. **Phase 1 (done):** skeleton, Flyway schema, one-player ingestion, parsed moves.
 2. **Phase 2 (done):** `/openings` with SQL-first aggregates, guarded verdicts, tests, Swagger.
 3. **Phase 3 (done and live):** async jobs, Redis caching, distributed outbound gate, incremental sync, scheduler, Render deployment.
-4. Phase 4: `/time-controls`, `/tilt`, `/trends`, `/summary`.
+4. **Phase 4 (done in code):** `/time-controls`, `/tilt`, `/trends`, `/summary`.
 5. Phase 5: complete one-page chart frontend with the Phase 4 data. The sync + openings dashboard is already live.
 6. Phase 6 (optional): feature-flagged Stockfish analysis, only then `/blunders-by-clock`.
