@@ -9,7 +9,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest
@@ -25,9 +25,9 @@ class RootControllerTest {
     private SyncJobService syncJobService;
 
     @Test
-    void root_redirectsToSwaggerUi() throws Exception {
+    void root_forwardsToTheDashboard() throws Exception {
         mockMvc.perform(get("/"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/swagger-ui.html"));
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
     }
 }

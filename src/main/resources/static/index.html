@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f2f2ea">
+    <meta name="description" content="GambitRate finds the openings costing you rating, with sample-size-guarded verdicts.">
+    <title>GambitRate — Opening analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+    <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css?v=4">
+    <script src="/app.js?v=4" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to analysis</a>
+
+<header class="site-header">
+    <a class="brand" href="/" aria-label="GambitRate home">
+        <svg class="brand__mark" viewBox="0 0 42 42" aria-hidden="true">
+            <rect width="42" height="42" fill="currentColor"/>
+            <rect x="7" y="7" width="12" height="12" fill="#f2f2ea"/>
+            <rect x="23" y="23" width="12" height="12" fill="#f2f2ea"/>
+            <rect x="23" y="7" width="12" height="12" fill="#b3422f"/>
+        </svg>
+        <span class="brand__name">GambitRate</span>
+        <span class="brand__descriptor">opening analysis</span>
+    </a>
+    <nav class="header-nav" aria-label="Primary navigation">
+        <a href="#method">Method</a>
+        <a href="/swagger-ui.html" target="_blank" rel="noreferrer">API docs</a>
+        <span class="api-status" id="apiStatus" aria-live="polite">
+            <span class="api-status__dot" aria-hidden="true"></span>
+            <span id="apiStatusText">Checking API</span>
+        </span>
+    </nav>
+</header>
+
+<main id="main" class="page">
+    <noscript>
+        <p class="noscript">This dashboard needs JavaScript. The API is still available at <a href="/swagger-ui.html">Swagger UI</a>.</p>
+    </noscript>
+    <section class="hero" aria-labelledby="heroTitle">
+        <div class="hero__content">
+            <p class="section-kicker">Public chess.com history, read honestly</p>
+            <h1 id="heroTitle">Your rating has a pattern.</h1>
+            <p class="hero__lede">
+                Find the openings that hurt your results, separated from noise.
+                Every verdict shows its sample size and the baseline it was measured against.
+            </p>
+
+            <form class="sync-form" id="syncForm" novalidate>
+                <label class="field-label" for="username">Chess.com username</label>
+                <div class="sync-form__row">
+                    <input
+                            id="username"
+                            name="username"
+                            class="text-input"
+                            type="text"
+                            inputmode="text"
+                            autocomplete="off"
+                            autocapitalize="none"
+                            spellcheck="false"
+                            maxlength="50"
+                            placeholder="e.g. hikaru"
+                            aria-describedby="usernameHelp"
+                            required>
+                    <button class="button button--primary" id="syncButton" type="submit">
+                        <span class="button__label">Sync &amp; analyze</span>
+                        <svg class="button__arrow" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="sync-form__meta">
+                    <p class="field-help" id="usernameHelp">We fetch public games; no password or login required.</p>
+                    <button class="text-button" id="demoButton" type="button">Try the demo account</button>
+                </div>
+                <p class="form-message" id="formMessage" role="status" aria-live="polite" hidden></p>
+            </form>
+        </div>
+
+        <aside class="hero__aside" aria-labelledby="methodSummaryTitle">
+            <div class="board-field" aria-hidden="true">
+                <span class="board-marker board-marker--white"></span>
+                <span class="board-marker board-marker--red"></span>
+            </div>
+            <div class="hero__method">
+                <p class="section-kicker">Three checks before a verdict</p>
+                <h2 id="methodSummaryTitle">Evidence over instinct.</h2>
+                <ol class="step-list">
+                    <li>
+                        <span class="step-number">1</span>
+                        <div>
+                            <h3>Sync</h3>
+                            <p>Pull the public game history and parse every move clock.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <span class="step-number">2</span>
+                        <div>
+                            <h3>Group</h3>
+                            <p>Compare openings by color, ECO, and the results you actually got.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <span class="step-number">3</span>
+                        <div>
+                            <h3>Guard</h3>
+                            <p>Call a leak only after the sample clears a 95% baseline check.</p>
+                        </div>
+                    </li>
+                </ol>
+                <p class="hero__aside-note">No engine required. No blunder claims from clocks.</p>
+            </div>
+        </aside>
+    </section>
+
+    <section class="sync-panel" id="syncPanel" aria-live="polite" hidden>
+        <div class="sync-panel__heading">
+            <span class="sync-indicator" id="syncIndicator" aria-hidden="true"></span>
+            <div>
+                <p class="sync-panel__label" id="syncStatusLabel">Preparing sync</p>
+                <p class="sync-panel__meta" id="syncStatusMeta"></p>
+            </div>
+        </div>
+        <div class="progress" id="syncProgressWrap" hidden>
+            <div class="progress__track" id="syncProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <span class="progress__fill" id="syncProgressFill"></span>
+            </div>
+        </div>
+    </section>
+
+    <section class="workspace" id="workspace" aria-labelledby="playerTitle" hidden>
+        <header class="workspace__header">
+            <div>
+                <p class="section-kicker">Opening report</p>
+                <h2 id="playerTitle">Player</h2>
+                <p class="workspace__meta" id="playerMeta"></p>
+            </div>
+            <div class="workspace__actions">
+                <button class="button button--quiet" id="refreshButton" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M20 11a8 8 0 1 0-2.3 6.7M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="square"/>
+                    </svg>
+                    Sync again
+                </button>
+            </div>
+        </header>
+
+        <div class="error-banner" id="errorBanner" role="alert" hidden>
+            <p id="errorMessage"></p>
+            <button class="text-button" id="dismissError" type="button">Dismiss</button>
+        </div>
+
+        <div class="loading-state" id="analysisLoader" aria-live="polite" hidden>
+            <div class="skeleton skeleton--short"></div>
+            <div class="skeleton skeleton--long"></div>
+            <div class="skeleton-grid">
+                <div class="skeleton skeleton--panel"></div>
+                <div class="skeleton skeleton--panel"></div>
+            </div>
+        </div>
+
+        <div id="analysisContent">
+            <section class="scoreboard" id="scoreboard" aria-label="Report summary">
+                <div class="scoreboard__main">
+                    <p class="stat-label">Biggest rating cost</p>
+                    <p class="stat-value" id="statBiggestCost">—</p>
+                    <p class="stat-detail" id="statBiggestDetail">No groups loaded yet.</p>
+                </div>
+                <div class="scoreboard__item">
+                    <p class="stat-number" id="statGroups">—</p>
+                    <p class="stat-label">Openings in view</p>
+                </div>
+                <div class="scoreboard__item">
+                    <p class="stat-number" id="statLeaks">—</p>
+                    <p class="stat-label">Leaks passing the guard</p>
+                </div>
+                <div class="scoreboard__item">
+                    <p class="stat-number" id="statGames">—</p>
+                    <p class="stat-label">Games in view</p>
+                </div>
+            </section>
+
+            <form class="filter-bar" id="filterForm" aria-label="Opening filters">
+                <fieldset class="filter-field filter-field--segmented">
+                    <legend>Time class</legend>
+                    <div class="segmented">
+                        <label><input type="radio" name="timeClass" value="" checked><span>All</span></label>
+                        <label><input type="radio" name="timeClass" value="bullet"><span>Bullet</span></label>
+                        <label><input type="radio" name="timeClass" value="blitz"><span>Blitz</span></label>
+                        <label><input type="radio" name="timeClass" value="rapid"><span>Rapid</span></label>
+                        <label><input type="radio" name="timeClass" value="daily"><span>Daily</span></label>
+                    </div>
+                </fieldset>
+
+                <label class="filter-field">
+                    <span>Minimum games</span>
+                    <select id="minGames" name="minGames">
+                        <option value="5">5 games</option>
+                        <option value="10">10 games</option>
+                        <option value="20">20 games</option>
+                        <option value="50">50 games</option>
+                    </select>
+                </label>
+
+                <label class="filter-field">
+                    <span>Group by</span>
+                    <select id="groupBy" name="groupBy">
+                        <option value="eco">ECO code</option>
+                        <option value="line">Opening line</option>
+                    </select>
+                </label>
+
+                <label class="filter-field" id="firstMovesField" hidden>
+                    <span>First moves</span>
+                    <input class="text-input" id="firstMoves" name="firstMoves" type="number" min="1" max="20" value="6">
+                </label>
+
+                <fieldset class="filter-field filter-field--dates">
+                    <legend>Date range</legend>
+                    <div class="date-range">
+                        <label class="visually-hidden" for="fromDate">From date</label>
+                        <input class="text-input" id="fromDate" name="from" type="date">
+                        <span class="date-range__dash" aria-hidden="true">to</span>
+                        <label class="visually-hidden" for="toDate">To date</label>
+                        <input class="text-input" id="toDate" name="to" type="date">
+                    </div>
+                </fieldset>
+
+                <div class="filter-actions">
+                    <button class="button button--secondary" id="applyFilters" type="submit">Apply filters</button>
+                    <button class="text-button" id="resetFilters" type="button">Reset</button>
+                </div>
+            </form>
+
+            <div class="analysis-grid">
+                <section class="panel chart-panel" aria-labelledby="chartTitle">
+                    <header class="panel__header">
+                        <div>
+                            <p class="section-kicker">Ranked by impact</p>
+                            <h3 id="chartTitle">The costliest patterns</h3>
+                        </div>
+                        <p class="panel__note">Heuristic Elo impact</p>
+                    </header>
+                    <div class="chart-legend" aria-hidden="true">
+                        <span><i class="legend-dot legend-dot--cost"></i>rating cost</span>
+                        <span><i class="legend-dot legend-dot--gain"></i>rating gain</span>
+                    </div>
+                    <div class="cost-chart" id="costChart"></div>
+                    <p class="visually-hidden" id="chartSummary"></p>
+                </section>
+
+                <aside class="panel verdict-panel" aria-labelledby="verdictTitle">
+                    <header class="panel__header">
+                        <div>
+                            <p class="section-kicker">What stands out</p>
+                            <h3 id="verdictTitle">The verdict</h3>
+                        </div>
+                    </header>
+                    <div class="verdict-content" id="verdictContent"></div>
+                </aside>
+            </div>
+
+            <section class="panel table-panel" id="tablePanel" aria-labelledby="tableTitle">
+                <header class="panel__header">
+                    <div>
+                        <p class="section-kicker">Everything in view</p>
+                        <h3 id="tableTitle">Opening groups</h3>
+                    </div>
+                    <p class="panel__note" id="tableCount"></p>
+                </header>
+                <div class="table-wrap">
+                    <table class="data-table" id="openingsTable">
+                        <caption class="visually-hidden">Opening performance groups with win rate, baseline, rating delta, and verdict</caption>
+                        <thead>
+                        <tr>
+                            <th scope="col" data-key="opening"><button type="button" class="sort-button">Opening</button></th>
+                            <th scope="col">Side</th>
+                            <th scope="col" data-key="games"><button type="button" class="sort-button">Games</button></th>
+                            <th scope="col" data-key="winRate"><button type="button" class="sort-button">Win rate</button></th>
+                            <th scope="col" data-key="baselineWinRate">Baseline</th>
+                            <th scope="col">Draw</th>
+                            <th scope="col">Avg Δ</th>
+                            <th scope="col" data-key="estimatedRatingCost"><button type="button" class="sort-button">Cost</button></th>
+                            <th scope="col">Verdict</th>
+                        </tr>
+                        </thead>
+                        <tbody id="openingsBody"></tbody>
+                    </table>
+                </div>
+                <div class="table-footer">
+                    <p id="tableVisibility"></p>
+                    <button class="text-button" id="toggleRows" type="button" hidden></button>
+                </div>
+            </section>
+
+            <section class="empty-state" id="emptyState" hidden aria-live="polite">
+                <p class="section-kicker">Nothing to score yet</p>
+                <h3 id="emptyTitle">No opening groups found</h3>
+                <p id="emptyMessage"></p>
+                <button class="button button--secondary" id="emptyAction" type="button" hidden></button>
+            </section>
+        </div>
+    </section>
+
+    <section class="next-up" aria-label="Coming next">
+        <p class="section-kicker">Next on the board</p>
+        <p>Time-control leaks, tilt, trends, and a top-three summary are next. This page only shows what the API can defend today.</p>
+    </section>
+
+    <section class="method" id="method" aria-labelledby="methodTitle">
+        <div class="method__intro">
+            <p class="section-kicker">Method</p>
+            <h2 id="methodTitle">Numbers first. Verdict second.</h2>
+            <p>
+                GambitRate is an opinionated read of the games you have already played.
+                It looks for a result pattern, then asks whether the sample is strong enough to say it matters.
+            </p>
+        </div>
+        <div class="method__items">
+            <details open>
+                <summary>How a verdict is assigned</summary>
+                <p>
+                    Each opening group is compared with your overall win rate for that color.
+                    A verdict needs at least five games and a two-sided 95% z-test.
+                    Groups below the minimum game count are hidden.
+                </p>
+            </details>
+            <details>
+                <summary>What rating cost means</summary>
+                <p>
+                    The signed cost is an estimate: (color baseline win rate − group win rate) × games × 10.
+                    Positive values suggest rating cost; negative values suggest rating gain.
+                    It is a ranking aid, not a chess.com rating receipt.
+                </p>
+            </details>
+            <details>
+                <summary>What this page does not claim</summary>
+                <p>
+                    PGN clocks show time, not move quality. A low clock is not a blunder.
+                    Without an engine, this page does not claim to know which move caused a loss.
+                    Accuracy is only shown by the API when chess.com supplied it.
+                </p>
+            </details>
+        </div>
+    </section>
+</main>
+
+<footer class="site-footer">
+    <p>GambitRate is a backend-first chess analysis portfolio project.</p>
+    <p><a href="/swagger-ui.html" target="_blank" rel="noreferrer">Swagger API</a> <span aria-hidden="true">/</span> <a href="https://github.com/AtharvaAgalawe/Gambitrate" target="_blank" rel="noreferrer">GitHub</a></p>
+</footer>
+</body>
+</html>
