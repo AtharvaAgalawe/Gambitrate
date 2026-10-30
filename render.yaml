@@ -3,6 +3,7 @@ services:
     name: gambitrate
     runtime: docker
     plan: free
+    branch: dev
     healthCheckPath: /actuator/health
     autoDeployTrigger: commit
     envVars:
