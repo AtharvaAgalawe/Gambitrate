@@ -553,6 +553,17 @@ class Phase4AnalyticsIT {
                 .contains("No statistically guarded leaks");
     }
 
+    @Test
+    void phase4Endpoints_appearInOpenApiDocument() {
+        JsonNode body = get("/v3/api-docs").getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.path("paths").has("/api/players/{username}/time-controls")).isTrue();
+        assertThat(body.path("paths").has("/api/players/{username}/tilt")).isTrue();
+        assertThat(body.path("paths").has("/api/players/{username}/trends")).isTrue();
+        assertThat(body.path("paths").has("/api/players/{username}/summary")).isTrue();
+    }
+
     private void seedSummaryData() {
         seedPlayer("summaryuser");
 

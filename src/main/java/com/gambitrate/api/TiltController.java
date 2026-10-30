@@ -90,7 +90,7 @@ public class TiltController {
             @Max(value = 10_000, message = "minGames must be at most 10000")
             int minGames,
 
-            @Parameter(description = "IANA timezone for hour/day grouping, e.g. America/New_York. Default UTC.")
+            @Parameter(description = "Timezone ID for hour/day grouping, e.g. America/New_York. Default UTC.")
             @RequestParam(defaultValue = "UTC")
             @Size(max = 64, message = "tz must be at most 64 characters")
             String tz

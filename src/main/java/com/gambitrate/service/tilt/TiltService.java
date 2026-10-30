@@ -198,16 +198,10 @@ public class TiltService {
     private static String validateTimezone(String rawTimezone) {
         String timezone = rawTimezone == null || rawTimezone.isBlank() ? "UTC" : rawTimezone.trim();
         try {
-            ZoneId zone = ZoneId.of(timezone);
-            if (!"UTC".equals(zone.getId()) && zone.getRules().isFixedOffset()) {
-                throw new InvalidFilterException(
-                        "'tz' must be an IANA region ID such as America/New_York, or UTC."
-                );
-            }
-            return zone.getId();
+            return ZoneId.of(timezone).getId();
         } catch (DateTimeException exception) {
             throw new InvalidFilterException(
-                    "'tz' must be a valid IANA timezone such as America/New_York, or UTC."
+                    "'tz' must be a valid timezone such as America/New_York, or UTC."
             );
         }
     }
