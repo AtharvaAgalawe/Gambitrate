@@ -2,7 +2,7 @@
 
 GambitRate ingests a public chess.com player's games and turns them into opinionated answers about what is hurting their rating. It is **not** a game viewer. Every analytics endpoint ends in numbers and a verdict.
 
-**Current status: Phase 3 implementation.** Sync runs as a persisted async job with progress polling. Redis caches immutable months, revalidates the current month with ETags, and serializes outbound chess.com calls across instances. Incremental sync and a scheduled re-sync job are in place. The Render Blueprint is ready; a live URL requires Render account authorization.
+**Current status: Phase 3 complete and deployed.** The live service is at **[gambitrate.onrender.com](https://gambitrate.onrender.com)**. Async sync jobs, Redis caching, incremental sync, ETag revalidation, the distributed outbound gate, and the scheduled sweep are in place. A single-page dashboard for sync and opening analysis is included ahead of Phase 5.
 
 ## Architecture
 
@@ -94,7 +94,7 @@ Or run everything in containers:
 docker compose up --build
 ```
 
-- API: `http://localhost:8080`
+- Dashboard: `http://localhost:8080/`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - Health: `http://localhost:8080/actuator/health`
 
@@ -230,6 +230,20 @@ Example response, reduced to one group:
 - Groups below `minGames` are hidden. If no groups qualify, the endpoint returns `200` with an empty `openings` array and an explanatory `message`.
 - Results are sorted by `estimatedRatingCost` descending. The verdict, not the cost alone, decides whether a group is actionable.
 
+## Dashboard
+
+The root URL serves a static one-page dashboard for the features that exist today:
+
+- Sync a chess.com username with a live job status and month progress.
+- Show summary metrics, the biggest rating cost, leak count, and games in view.
+- Rank openings with signed estimated rating-cost bars.
+- Show the strongest verdict with its sample size, baseline, winrate, and reason.
+- Filter by time class, minimum games, ECO vs opening line, first moves, and date range.
+- Browse the opening table with sorting, a readable 20-row first page, and responsive cards on mobile.
+- Explain the sample guard, rating-delta method, and clock honesty in an expandable Method section.
+
+It deliberately does not show placeholder heatmaps, tilt, or trends. Those sections arrive only when their APIs exist.
+
 ## Configuration
 
 All values have safe local defaults and can be overridden with environment variables.
@@ -341,13 +355,13 @@ Async ingestion failures are recorded in the sync job’s `error` field and do n
 
 ## Deployment
 
-`render.yaml` provisions the free Render web service, Postgres database, and Key Value cache. See [DEPLOYMENT.md](DEPLOYMENT.md) for the one-time setup and free-tier sleep caveats. The repository is deployment-ready but has not been published to a live host from this session because no Render account authorization is available.
+The service is live at **https://gambitrate.onrender.com**. `render.yaml` provisions the free Render web service, Postgres database, and Key Value cache. See [DEPLOYMENT.md](DEPLOYMENT.md) for setup and free-tier sleep caveats.
 
 ## Roadmap
 
 1. **Phase 1 (done):** skeleton, Flyway schema, one-player ingestion, parsed moves.
 2. **Phase 2 (done):** `/openings` with SQL-first aggregates, guarded verdicts, tests, Swagger.
-3. **Phase 3 (implementation done, deploy pending authorization):** async jobs, Redis caching, distributed outbound gate, incremental sync, scheduler, Render Blueprint.
+3. **Phase 3 (done and live):** async jobs, Redis caching, distributed outbound gate, incremental sync, scheduler, Render deployment.
 4. Phase 4: `/time-controls`, `/tilt`, `/trends`, `/summary`.
-5. Phase 5: one-page chart frontend.
+5. Phase 5: complete one-page chart frontend with the Phase 4 data. The sync + openings dashboard is already live.
 6. Phase 6 (optional): feature-flagged Stockfish analysis, only then `/blunders-by-clock`.

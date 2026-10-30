@@ -18,6 +18,7 @@ The repository includes a Render Blueprint in `render.yaml`.
    `GambitRate/1.0 (contact: you@example.com)`.
 5. Wait for the Docker build and health check.
 6. Swagger: `https://<service>.onrender.com/swagger-ui.html`
+7. Dashboard: `https://<service>.onrender.com/`
 
 Migrations run automatically on startup through Flyway.
 
