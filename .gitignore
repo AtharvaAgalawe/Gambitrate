@@ -27,5 +27,7 @@ Thumbs.db
 .env.*
 *.log
 
-### Personal notes ###
+### Local project notes ###
+/AGENTS.md
+/PRD.md
 /INTERVIEW_QUESTIONS.md
