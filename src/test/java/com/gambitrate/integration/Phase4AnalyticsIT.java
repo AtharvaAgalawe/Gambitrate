@@ -346,6 +346,158 @@ class Phase4AnalyticsIT {
                 .containsIgnoringCase("timezone");
     }
 
+    @Test
+    void trends_returnsMonthlyStatsAndAccuracyCoverageChronologically() {
+        seedTrendData();
+
+        JsonNode body = get("/api/players/trenduser/trends").getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.path("months")).hasSize(2);
+        JsonNode january = body.path("months").get(0);
+        assertThat(january.path("month").asText()).isEqualTo("2024-01");
+        assertThat(january.path("games").asLong()).isEqualTo(6);
+        assertThat(january.path("wins").asLong()).isEqualTo(3);
+        assertThat(january.path("draws").asLong()).isEqualTo(1);
+        assertThat(january.path("losses").asLong()).isEqualTo(2);
+        assertThat(january.path("winRate").asDouble()).isCloseTo(0.5, within(0.0001));
+        assertThat(january.path("averageRating").asDouble()).isCloseTo(1512.5, within(0.01));
+        assertThat(january.path("ratingGames").asLong()).isEqualTo(6);
+        assertThat(january.path("averageAccuracy").asDouble()).isCloseTo(85.0, within(0.01));
+        assertThat(january.path("accuracyGames").asLong()).isEqualTo(4);
+        assertThat(january.path("accuracyCoverage").asDouble())
+                .isCloseTo(0.6667, within(0.0001));
+
+        JsonNode february = body.path("months").get(1);
+        assertThat(february.path("month").asText()).isEqualTo("2024-02");
+        assertThat(february.path("games").asLong()).isEqualTo(5);
+        assertThat(february.path("wins").asLong()).isEqualTo(2);
+        assertThat(february.path("losses").asLong()).isEqualTo(3);
+        assertThat(february.path("winRate").asDouble()).isCloseTo(0.4, within(0.0001));
+        assertThat(february.path("averageRating").asDouble()).isCloseTo(1540.0, within(0.01));
+        assertThat(february.path("averageAccuracy").asDouble()).isCloseTo(65.0, within(0.01));
+        assertThat(february.path("accuracyGames").asLong()).isEqualTo(3);
+        assertThat(february.path("accuracyCoverage").asDouble()).isCloseTo(0.6, within(0.0001));
+
+        assertThat(body.path("accuracyCoverage").path("gamesWithAccuracy").asLong())
+                .isEqualTo(7);
+        assertThat(body.path("accuracyCoverage").path("totalGames").asLong()).isEqualTo(11);
+        assertThat(body.path("accuracyCoverage").path("coverage").asDouble())
+                .isCloseTo(0.6364, within(0.0001));
+        assertThat(body.path("notes").toString()).contains("coverage");
+        assertThat(body.path("message").isNull()).isTrue();
+
+        JsonNode allMonths = get("/api/players/trenduser/trends?minGames=4").getBody();
+        assertThat(allMonths).isNotNull();
+        assertThat(allMonths.path("months")).hasSize(3);
+        JsonNode december = allMonths.path("months").get(0);
+        assertThat(december.path("month").asText()).isEqualTo("2023-12");
+        assertThat(december.path("games").asLong()).isEqualTo(4);
+        assertThat(december.path("winRate").asDouble()).isCloseTo(0.25, within(0.0001));
+        assertThat(december.path("averageRating").asDouble()).isCloseTo(1457.5, within(0.01));
+        assertThat(december.path("averageAccuracy").asDouble()).isCloseTo(52.5, within(0.01));
+        assertThat(december.path("accuracyCoverage").asDouble()).isCloseTo(0.5, within(0.0001));
+        assertThat(allMonths.path("accuracyCoverage").path("coverage").asDouble())
+                .isCloseTo(0.6, within(0.0001));
+    }
+
+    @Test
+    void trends_filtersByTimeClassAndDate() {
+        seedPlayer("trendfilteruser");
+        for (int i = 1; i <= 5; i++) {
+            insertGame(
+                    "trend-rapid-" + i,
+                    "rapid",
+                    playedAt(2024, 1, i, 12, 0),
+                    "white",
+                    "win",
+                    "checkmate",
+                    1500 + i * 5,
+                    new BigDecimal("80.00"),
+                    movesSan(24)
+            );
+            insertGame(
+                    "trend-blitz-" + i,
+                    "blitz",
+                    playedAt(2024, 2, i, 18, 0),
+                    "white",
+                    "loss",
+                    "resign",
+                    1400 - i * 5,
+                    new BigDecimal("60.00"),
+                    movesSan(24)
+            );
+        }
+
+        JsonNode rapid = get(
+                "/api/players/trendfilteruser/trends?timeClass=rapid"
+        ).getBody();
+        assertThat(rapid).isNotNull();
+        assertThat(rapid.path("months")).hasSize(1);
+        assertThat(rapid.path("months").get(0).path("month").asText()).isEqualTo("2024-01");
+        assertThat(rapid.path("months").get(0).path("games").asLong()).isEqualTo(5);
+        assertThat(rapid.path("months").get(0).path("winRate").asDouble())
+                .isCloseTo(1.0, within(0.0001));
+
+        JsonNode february = get(
+                "/api/players/trendfilteruser/trends?from=2024-02-01&to=2024-02-29"
+        ).getBody();
+        assertThat(february).isNotNull();
+        assertThat(february.path("months")).hasSize(1);
+        assertThat(february.path("months").get(0).path("month").asText()).isEqualTo("2024-02");
+        assertThat(february.path("months").get(0).path("games").asLong()).isEqualTo(5);
+        assertThat(february.path("months").get(0).path("winRate").asDouble())
+                .isCloseTo(0.0, within(0.0001));
+    }
+
+    @Test
+    void trends_returnsEmptyMessage_whenNoMonthsMatch() {
+        seedPlayer("trendempty");
+
+        JsonNode body = get("/api/players/trendempty/trends?from=2025-01-01").getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.path("months")).isEmpty();
+        assertThat(body.path("accuracyCoverage").path("totalGames").asLong()).isZero();
+        assertThat(body.path("message").asText()).contains("No months matched");
+    }
+
+    private void seedTrendData() {
+        seedPlayer("trenduser");
+        insertGame("trend-dec-1", "rapid", playedAt(2023, 12, 1, 12, 0),
+                "white", "win", "checkmate", 1450, new BigDecimal("50.00"), movesSan(24));
+        insertGame("trend-dec-2", "rapid", playedAt(2023, 12, 2, 12, 0),
+                "white", "draw", "agreement", 1455, new BigDecimal("55.00"), movesSan(24));
+        insertGame("trend-dec-3", "rapid", playedAt(2023, 12, 3, 12, 0),
+                "white", "loss", "resign", 1460, null, movesSan(24));
+        insertGame("trend-dec-4", "rapid", playedAt(2023, 12, 4, 12, 0),
+                "white", "loss", "resign", 1465, null, movesSan(24));
+
+        insertGame("trend-jan-1", "rapid", playedAt(2024, 1, 1, 12, 0),
+                "white", "win", "checkmate", 1500, new BigDecimal("70.00"), movesSan(24));
+        insertGame("trend-jan-2", "rapid", playedAt(2024, 1, 2, 12, 0),
+                "white", "win", "checkmate", 1505, new BigDecimal("80.00"), movesSan(24));
+        insertGame("trend-jan-3", "rapid", playedAt(2024, 1, 3, 12, 0),
+                "white", "win", "checkmate", 1510, new BigDecimal("90.00"), movesSan(24));
+        insertGame("trend-jan-4", "rapid", playedAt(2024, 1, 4, 12, 0),
+                "white", "draw", "agreement", 1515, null, movesSan(24));
+        insertGame("trend-jan-5", "rapid", playedAt(2024, 1, 5, 12, 0),
+                "white", "loss", "resign", 1520, null, movesSan(24));
+        insertGame("trend-jan-6", "rapid", playedAt(2024, 1, 6, 12, 0),
+                "white", "loss", "resign", 1525, new BigDecimal("100.00"), movesSan(24));
+
+        insertGame("trend-feb-1", "rapid", playedAt(2024, 2, 1, 12, 0),
+                "white", "win", "checkmate", 1530, new BigDecimal("60.00"), movesSan(24));
+        insertGame("trend-feb-2", "rapid", playedAt(2024, 2, 2, 12, 0),
+                "white", "win", "checkmate", 1535, new BigDecimal("65.00"), movesSan(24));
+        insertGame("trend-feb-3", "rapid", playedAt(2024, 2, 3, 12, 0),
+                "white", "loss", "resign", 1540, new BigDecimal("70.00"), movesSan(24));
+        insertGame("trend-feb-4", "rapid", playedAt(2024, 2, 4, 12, 0),
+                "white", "loss", "resign", 1545, null, movesSan(24));
+        insertGame("trend-feb-5", "rapid", playedAt(2024, 2, 5, 12, 0),
+                "white", "loss", "resign", 1550, null, movesSan(24));
+    }
+
     private void seedTiltData() {
         seedPlayer("tiltuser");
         String[] results = {
