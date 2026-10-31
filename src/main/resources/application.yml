@@ -52,6 +52,8 @@ gambitrate:
     scheduler:
       fixed-delay: ${SYNC_FIXED_DELAY:1h}
       initial-delay: ${SYNC_INITIAL_DELAY:10m}
+  analytics:
+    tilt-session-gap: ${TILT_SESSION_GAP:30m}
 
 logging:
   level:
