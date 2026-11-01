@@ -1039,13 +1039,13 @@ select:focus {
     border-radius: 1px;
 }
 
-.cost-bar--positive {
-    left: 50%;
+.cost-bar--loss {
+    right: 50%;
     background: var(--leak);
 }
 
-.cost-bar--negative {
-    right: 50%;
+.cost-bar--gain {
+    left: 50%;
     background: var(--strength);
 }
 
@@ -1057,11 +1057,11 @@ select:focus {
     white-space: nowrap;
 }
 
-.cost-value.is-positive {
+.cost-value.is-loss {
     color: var(--leak);
 }
 
-.cost-value.is-negative {
+.cost-value.is-gain {
     color: var(--strength);
 }
 
@@ -1138,12 +1138,6 @@ select:focus {
     font-size: clamp(2.1rem, 3.6vw, 3.2rem);
     line-height: 0.94;
     letter-spacing: -0.025em;
-}
-
-.verdict-card__side {
-    margin: 0;
-    color: var(--muted);
-    font-size: 12px;
 }
 
 .verdict-reason {
@@ -1345,28 +1339,6 @@ th[aria-sort="descending"] .sort-button::after {
     line-height: 1.25;
 }
 
-.eco-badge {
-    padding: 1px 5px;
-    color: var(--ink-soft);
-    background: var(--paper-deep);
-    border: 1px solid var(--line);
-    border-radius: 1px;
-    font-family: var(--mono, ui-monospace, SFMono-Regular, Consolas, monospace);
-    font-size: 10px;
-    font-weight: 600;
-    white-space: nowrap;
-}
-
-.opening-cell__line {
-    max-width: 440px;
-    overflow: hidden;
-    color: var(--muted);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 10px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .side-label {
     display: inline-flex;
     align-items: center;
@@ -1420,11 +1392,11 @@ th[aria-sort="descending"] .sort-button::after {
     white-space: nowrap;
 }
 
-.cost-text.is-positive {
+.cost-text.is-loss {
     color: var(--leak);
 }
 
-.cost-text.is-negative {
+.cost-text.is-gain {
     color: var(--strength);
 }
 
@@ -1941,10 +1913,6 @@ th[aria-sort="descending"] .sort-button::after {
 
     .opening-cell {
         min-width: 0;
-    }
-
-    .opening-cell__line {
-        max-width: 100%;
     }
 
     .opening-cell__name {

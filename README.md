@@ -229,7 +229,7 @@ Example response, reduced to one group:
       "baselineGames": 1280,
       "estimatedRatingCost": 59.5,
       "verdict": "fine",
-      "verdictReason": "Within normal game-to-game variation: 50.0% wins vs a 56.3% white baseline over 94 games."
+      "verdictReason": "You win 50.0% of these games as White. You usually win 56.3%. Over 94 games, that is within normal game-to-game variation."
     }
   ],
   "message": null
@@ -560,12 +560,12 @@ Reduced response:
 The root URL serves a static one-page dashboard for the features that exist today:
 
 - Sync a chess.com username with a live job status and month progress.
-- Show summary metrics, the biggest rating cost, leak count, and games in view.
-- Rank openings with signed estimated rating-cost bars.
-- Show the strongest verdict with its sample size, baseline, winrate, and reason.
-- Filter by time class, minimum games, ECO vs opening line, first moves, and date range.
+- Show summary metrics, the biggest rating loss, weak-opening count, and games analyzed.
+- Rank openings with signed estimated rating-impact bars, where negative means rating lost.
+- Show the main finding with its games played, usual win rate, and plain-language reason.
+- Filter by game speed, games per opening, and date range.
 - Browse the opening table with sorting, a readable 20-row first page, and responsive cards on mobile.
-- Explain the sample guard, rating-delta method, and clock honesty in an expandable Method section.
+- Explain the sample check, rating-impact estimate, and clock honesty in an expandable Method section.
 
 The dashboard still focuses on sync and openings. The Phase 4 APIs exist, but the matching time-control, tilt, trend, and summary charts are the Phase 5 frontend work.
 
