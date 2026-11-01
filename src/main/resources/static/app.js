@@ -35,9 +35,6 @@
         filterForm: document.getElementById("filterForm"),
         timeClassInputs: [...document.querySelectorAll('input[name="timeClass"]')],
         minGames: document.getElementById("minGames"),
-        groupBy: document.getElementById("groupBy"),
-        firstMovesField: document.getElementById("firstMovesField"),
-        firstMoves: document.getElementById("firstMoves"),
         fromDate: document.getElementById("fromDate"),
         toDate: document.getElementById("toDate"),
         applyFilters: document.getElementById("applyFilters"),
@@ -105,7 +102,16 @@
 
     const formatInteger = (value) => intFormat.format(Number(value) || 0);
 
-    const openingName = (group) => group.openingName || group.ecoCode || "Unknown opening";
+    // Chess.com opening names often end with the move sequence, for example
+    // "Ruy Lopez Opening Berlin Defense 4.d3 d6 5.O-O". Keep only the name.
+    const trimmedOpeningName = (value) => {
+        const cleaned = String(value || "").replace(/\s+/g, " ").trim();
+        const moveSequence = cleaned.search(/\s*\d+\.(?:\.\.)?\S*/);
+        const name = moveSequence >= 0 ? cleaned.slice(0, moveSequence) : cleaned;
+        return name.replace(/[\s.,;:+-]+$/, "").trim();
+    };
+
+    const openingName = (group) => trimmedOpeningName(group.openingName) || group.ecoCode || "Unknown opening";
 
     const side = (color) => String(color || "").toLowerCase() === "black" ? "black" : "white";
 
@@ -114,9 +120,9 @@
     const sideMark = (color) => `<span class="side-mark side-mark--${side(color)}" aria-hidden="true"></span>`;
 
     const verdictLabel = (verdict) => {
-        if (verdict === "leak") return "Leak";
-        if (verdict === "strength") return "Strength";
-        return "Fine";
+        if (verdict === "leak") return "Weak spot";
+        if (verdict === "strength") return "Strong spot";
+        return "No pattern";
     };
 
     const verdictBadge = (verdict) => {
@@ -126,7 +132,7 @@
 
     const displayError = (error) => {
         if (error && error.status === 404) {
-            return error.message || "That player has not been synced yet.";
+            return error.message || "That player has not been analyzed yet.";
         }
         return error && error.message ? error.message : "Something went wrong. Try again.";
     };
@@ -219,7 +225,7 @@
         els.refreshButton.disabled = busy;
         els.applyFilters.disabled = busy;
         els.demoButton.disabled = busy;
-        els.syncButtonLabel.textContent = busy ? "Syncing…" : "Sync & analyze";
+        els.syncButtonLabel.textContent = busy ? "Analyzing…" : "Analyze my games";
     }
 
     function setPlayerInUrl(player) {
@@ -245,8 +251,6 @@
         return {
             timeClass: formData.get("timeClass") || "",
             minGames: Number(formData.get("minGames")) || 5,
-            groupBy: formData.get("groupBy") || "eco",
-            firstMoves: Number(formData.get("firstMoves")) || 6,
             from: formData.get("from") || "",
             to: formData.get("to") || ""
         };
@@ -257,25 +261,14 @@
             input.checked = input.value === (filters.timeClass || "");
         });
         els.minGames.value = String(filters.minGames || 5);
-        els.groupBy.value = filters.groupBy || "eco";
-        els.firstMoves.value = String(filters.firstMoves || 6);
         els.fromDate.value = filters.from || "";
         els.toDate.value = filters.to || "";
-        toggleFirstMoves();
-    }
-
-    function toggleFirstMoves() {
-        els.firstMovesField.hidden = els.groupBy.value !== "line";
     }
 
     function buildQuery(filters) {
         const params = new URLSearchParams();
         if (filters.timeClass) params.set("timeClass", filters.timeClass);
         params.set("minGames", String(filters.minGames));
-        params.set("groupBy", filters.groupBy);
-        if (filters.groupBy === "line") {
-            params.set("firstMoves", String(filters.firstMoves));
-        }
         if (filters.from) params.set("from", filters.from);
         if (filters.to) params.set("to", filters.to);
         return params.toString();
@@ -284,10 +277,10 @@
     function renderSyncPanel(job) {
         const status = job && job.status ? job.status : "QUEUED";
         const labels = {
-            QUEUED: "Sync queued",
-            RUNNING: "Syncing history",
-            DONE: "Sync complete",
-            FAILED: "Sync failed"
+            QUEUED: "Getting ready",
+            RUNNING: "Fetching your games",
+            DONE: "Games updated",
+            FAILED: "Could not update"
         };
         const stateName = status === "DONE" ? "done" : status === "FAILED" ? "failed" : "running";
         const total = Number(job?.monthsTotal) || 0;
@@ -295,17 +288,17 @@
 
         els.syncPanel.hidden = false;
         els.syncPanel.dataset.state = stateName;
-        els.syncStatusLabel.textContent = labels[status] || "Syncing history";
+        els.syncStatusLabel.textContent = labels[status] || "Fetching your games";
         if (status === "RUNNING") {
             els.syncStatusMeta.textContent = total > 0
-                ? `${done} of ${total} ${total === 1 ? "month" : "months"} complete`
-                : "Finding the archive list";
+                ? `${done} of ${total} ${total === 1 ? "month" : "months"} done`
+                : "Checking which months you played";
         } else if (status === "DONE") {
-            els.syncStatusMeta.textContent = `${total} ${total === 1 ? "month" : "months"} checked and saved.`;
+            els.syncStatusMeta.textContent = `${total} ${total === 1 ? "month" : "months"} of games saved.`;
         } else if (status === "FAILED") {
-            els.syncStatusMeta.textContent = job?.error || "The sync did not finish.";
+            els.syncStatusMeta.textContent = job?.error || "The update did not finish.";
         } else {
-            els.syncStatusMeta.textContent = "Waiting for a worker.";
+            els.syncStatusMeta.textContent = "Waiting to start.";
         }
 
         const showProgress = status === "RUNNING" || status === "DONE";
@@ -321,7 +314,7 @@
     function renderSyncError(error) {
         els.syncPanel.hidden = false;
         els.syncPanel.dataset.state = "failed";
-        els.syncStatusLabel.textContent = "Sync failed";
+        els.syncStatusLabel.textContent = "Could not update";
         els.syncStatusMeta.textContent = displayError(error);
         els.syncProgressWrap.hidden = true;
     }
@@ -344,16 +337,17 @@
     function renderPlayerMeta(data) {
         const filters = data.filters || {};
         const pieces = [];
-        pieces.push(filters.timeClass ? capitalize(filters.timeClass) : "All time classes");
-        pieces.push(`${filters.minGames || 5} game minimum`);
-        pieces.push(filters.groupBy === "line" ? `first ${filters.firstMoves || 6} moves` : "ECO groups");
+        pieces.push(filters.timeClass ? capitalize(filters.timeClass) : "All game speeds");
+        pieces.push(`at least ${filters.minGames || 5} games`);
+        pieces.push("grouped by opening");
         if (filters.from || filters.to) {
             const from = filters.from || "the start";
             const to = filters.to || "today";
             pieces.push(`${from} to ${to}`);
         }
         if (state.lastSync?.finishedAt) {
-            pieces.push(`${state.lastSync.monthsTotal || 0} months checked`);
+            const months = Number(state.lastSync.monthsTotal) || 0;
+            pieces.push(`${months} ${months === 1 ? "month" : "months"} checked`);
         }
         els.playerMeta.textContent = pieces.join(" · ");
     }
@@ -368,11 +362,11 @@
         els.statGroups.textContent = formatInteger(groups.length);
         els.statLeaks.textContent = formatInteger(leaks.length);
         els.statGames.textContent = formatInteger(totalGames);
-        els.statBiggestCost.textContent = biggest ? formatSigned(Number(biggest.estimatedRatingCost)) : "0.0";
+        els.statBiggestCost.textContent = biggest ? formatSigned(-Number(biggest.estimatedRatingCost)) : "0.0";
         els.statBiggestCost.classList.toggle("is-neutral", !biggest);
         els.statBiggestDetail.textContent = biggest
             ? `${openingName(biggest)} · ${formatInteger(biggest.games)} games`
-            : "No positive rating cost in this view.";
+            : "No opening is costing you rating in this view.";
     }
 
     function renderChart(groups) {
@@ -380,9 +374,9 @@
         if (!groups.length) {
             const empty = document.createElement("p");
             empty.className = "chart-empty";
-            empty.textContent = "No qualifying groups.";
+            empty.textContent = "No openings to show.";
             els.chart.append(empty);
-            els.chartSummary.textContent = "No opening groups to chart.";
+            els.chartSummary.textContent = "No openings to chart.";
             return;
         }
 
@@ -394,16 +388,17 @@
         if (maxAbs === 0) {
             const empty = document.createElement("p");
             empty.className = "chart-empty";
-            empty.textContent = "All groups sit on your baseline.";
+            empty.textContent = "Every opening is close to your usual results.";
             els.chart.append(empty);
-            els.chartSummary.textContent = "All opening groups are at the baseline estimate.";
+            els.chartSummary.textContent = "Every opening is close to your usual results.";
             return;
         }
 
         for (const group of rows) {
-            const cost = Number(group.estimatedRatingCost) || 0;
-            const isPositive = cost >= 0;
-            const width = Math.max(cost === 0 ? 0 : 2, Math.abs(cost) / maxAbs * 48);
+            const impact = -(Number(group.estimatedRatingCost) || 0);
+            const isLoss = impact < 0;
+            const width = Math.max(impact === 0 ? 0 : 2, Math.abs(impact) / maxAbs * 48);
+            const valueClass = isLoss ? "is-loss" : impact > 0 ? "is-gain" : "";
             const row = document.createElement("div");
             row.className = "cost-row";
             row.innerHTML = `
@@ -412,18 +407,19 @@
                         ${sideMark(group.color)}
                         <span title="${escapeHtml(openingName(group))}">${escapeHtml(openingName(group))}</span>
                     </div>
-                    <span class="cost-row__meta">${escapeHtml(sideLabel(group.color))} · ${formatInteger(group.games)} games · ${formatPercent(group.winRate)} wins</span>
+                    <span class="cost-row__meta">${escapeHtml(sideLabel(group.color))} · ${formatInteger(group.games)} games · won ${formatPercent(group.winRate)}</span>
                 </div>
                 <div class="cost-track" aria-hidden="true">
-                    <span class="cost-bar cost-bar--${isPositive ? "positive" : "negative"}" style="--bar-width: ${width.toFixed(2)}%;"></span>
+                    ${impact === 0 ? "" : `<span class="cost-bar cost-bar--${isLoss ? "loss" : "gain"}" style="--bar-width: ${width.toFixed(2)}%;"></span>`}
                 </div>
-                <div class="cost-value ${isPositive ? "is-positive" : "is-negative"}">${formatSigned(cost)}</div>
+                <div class="cost-value ${valueClass}">${formatSigned(impact)}</div>
             `;
             els.chart.append(row);
         }
 
         const lead = rows[0];
-        els.chartSummary.textContent = `Rating cost by opening. ${openingName(lead)} has the largest estimated cost at ${formatSigned(Number(lead.estimatedRatingCost))}.`;
+        const leadImpact = -(Number(lead.estimatedRatingCost) || 0);
+        els.chartSummary.textContent = `Estimated rating impact by opening. ${openingName(lead)} has the largest impact at ${formatSigned(leadImpact)} rating points.`;
     }
 
     function renderVerdict(groups) {
@@ -431,7 +427,7 @@
             els.verdictContent.innerHTML = `
                 <div class="verdict-empty">
                     <h4>Not enough data yet.</h4>
-                    <p>Sync a player or widen the filters to see an opening verdict.</p>
+                    <p>Add a player or loosen the filters to see a finding.</p>
                 </div>
             `;
             return;
@@ -447,30 +443,30 @@
 
         if (leaks.length) {
             const group = leaks[0];
+            const impact = -(Number(group.estimatedRatingCost) || 0);
             els.verdictContent.innerHTML = `
                 <article class="verdict-card">
                     <div class="verdict-card__top">
                         ${verdictBadge("leak")}
-                        <span class="verdict-card__eco">${escapeHtml(group.ecoCode || "—")} · ${escapeHtml(sideLabel(group.color))}</span>
+                        <span class="verdict-card__eco">As ${escapeHtml(sideLabel(group.color))}</span>
                     </div>
                     <h4>${escapeHtml(openingName(group))}</h4>
-                    ${group.line ? `<p class="verdict-card__side">${escapeHtml(group.line)}</p>` : ""}
                     <p class="verdict-reason">${escapeHtml(group.verdictReason)}</p>
                     <div class="verdict-stats">
                         <div class="verdict-stat">
                             <strong>${formatPercent(group.winRate)}</strong>
-                            <span>win rate · ${formatPercent(group.baselineWinRate)} baseline</span>
+                            <span>wins · usually ${formatPercent(group.baselineWinRate)}</span>
                         </div>
                         <div class="verdict-stat">
                             <strong>${formatInteger(group.games)}</strong>
-                            <span>games in this group</span>
+                            <span>games played</span>
                         </div>
                         <div class="verdict-stat">
-                            <strong>${formatSigned(Number(group.estimatedRatingCost))}</strong>
-                            <span>estimated Elo cost</span>
+                            <strong>${formatSigned(impact)}</strong>
+                            <span>rating points lost (est.)</span>
                         </div>
                     </div>
-                    <p class="verdict-caveat">Rating cost is a heuristic. The verdict is guarded by sample size and a 95% baseline check.</p>
+                    <p class="verdict-caveat">This is an estimate. We only flag an opening when there are enough games and the gap is very unlikely to be luck.</p>
                 </article>
             `;
             return;
@@ -484,15 +480,15 @@
             <div class="verdict-empty">
                 <div class="verdict-card__top">
                     ${verdictBadge("fine")}
-                    <span class="verdict-card__eco">${groups.length} ${groups.length === 1 ? "group" : "groups"}</span>
+                    <span class="verdict-card__eco">${groups.length} ${groups.length === 1 ? "opening" : "openings"}</span>
                 </div>
-                <h4>No proven leak.</h4>
+                <h4>Nothing to fix here.</h4>
                 <p>
-                    No opening sits far enough below your color baseline to clear the sample guard.
-                    ${closest ? `The closest group is <strong>${escapeHtml(openingName(closest))}</strong> at ${formatPercent(closest.winRate)} wins over ${formatInteger(closest.games)} games.` : ""}
+                    No opening is clearly worse than your usual results once we allow for how many games you have played there.
+                    ${closest ? `The closest is <strong>${escapeHtml(openingName(closest))}</strong> at ${formatPercent(closest.winRate)} wins over ${formatInteger(closest.games)} games.` : ""}
                 </p>
-                ${strongest ? `<p class="verdict-best"><span>Strongest sample</span> ${escapeHtml(openingName(strongest))} · ${formatPercent(strongest.winRate)} wins · ${formatInteger(strongest.games)} games</p>` : ""}
-                <p class="verdict-caveat">A flat or positive result is still useful: it means there is no obvious opening to fix in this view.</p>
+                ${strongest ? `<p class="verdict-best"><span>Best opening</span> ${escapeHtml(openingName(strongest))} · ${formatPercent(strongest.winRate)} wins · ${formatInteger(strongest.games)} games</p>` : ""}
+                <p class="verdict-caveat">That is good news: there is no obvious opening to fix in this view.</p>
             </div>
         `;
     }
@@ -530,32 +526,30 @@
         const sorted = sortGroups(groups);
         const visible = state.showAllRows ? sorted : sorted.slice(0, 20);
         const totalGames = groups.reduce((sum, group) => sum + (Number(group.games) || 0), 0);
-        els.tableCount.textContent = `${formatInteger(groups.length)} groups · ${formatInteger(totalGames)} games in view`;
+        els.tableCount.textContent = `${formatInteger(groups.length)} openings · ${formatInteger(totalGames)} games`;
         els.tableVisibility.textContent = sorted.length > 20
-            ? `Showing ${formatInteger(visible.length)} of ${formatInteger(sorted.length)} groups.`
-            : `Showing all ${formatInteger(sorted.length)} groups.`;
+            ? `Showing ${formatInteger(visible.length)} of ${formatInteger(sorted.length)} openings.`
+            : `Showing all ${formatInteger(sorted.length)} openings.`;
         els.toggleRows.hidden = sorted.length <= 20;
-        els.toggleRows.textContent = state.showAllRows ? "Show top 20" : `Show all ${formatInteger(sorted.length)} groups`;
+        els.toggleRows.textContent = state.showAllRows ? "Show top 20" : `Show all ${formatInteger(sorted.length)} openings`;
         els.openingsBody.innerHTML = visible.map((group) => {
             const delta = group.avgRatingDelta == null ? "—" : formatSigned(Number(group.avgRatingDelta));
             const deltaClass = group.avgRatingDelta == null ? "muted" : Number(group.avgRatingDelta) >= 0 ? "is-gain" : "is-cost";
-            const cost = Number(group.estimatedRatingCost) || 0;
-            const costClass = cost > 0 ? "is-positive" : cost < 0 ? "is-negative" : "muted";
+            const impact = -(Number(group.estimatedRatingCost) || 0);
+            const impactClass = impact < 0 ? "is-loss" : impact > 0 ? "is-gain" : "muted";
             const baseline = Math.max(0, Math.min(100, Number(group.baselineWinRate) * 100));
             return `
                 <tr>
                     <td data-label="Opening">
                         <div class="opening-cell">
                             <div class="opening-cell__name">
-                                <span class="eco-badge">${escapeHtml(group.ecoCode || "—")}</span>
                                 <span>${escapeHtml(openingName(group))}</span>
                             </div>
-                            ${group.line ? `<div class="opening-cell__line" title="${escapeHtml(group.line)}">${escapeHtml(group.line)}</div>` : ""}
                         </div>
                     </td>
-                    <td data-label="Side"><span class="side-label">${sideMark(group.color)}${escapeHtml(sideLabel(group.color))}</span></td>
+                    <td data-label="Color"><span class="side-label">${sideMark(group.color)}${escapeHtml(sideLabel(group.color))}</span></td>
                     <td data-label="Games" class="numeric">${formatInteger(group.games)}</td>
-                    <td data-label="Win rate">
+                    <td data-label="Won">
                         <span class="rate-cell">
                             <span class="numeric">${formatPercent(group.winRate)}</span>
                             <span class="rate-track" aria-hidden="true">
@@ -564,11 +558,11 @@
                             </span>
                         </span>
                     </td>
-                    <td data-label="Baseline" class="numeric muted">${formatPercent(group.baselineWinRate)}</td>
-                    <td data-label="Draw rate" class="numeric muted">${formatPercent(group.drawRate)}</td>
-                    <td data-label="Avg rating delta" class="numeric ${deltaClass}">${delta}</td>
-                    <td data-label="Estimated cost" class="numeric cost-text ${costClass}">${formatSigned(cost)}</td>
-                    <td data-label="Verdict">${verdictBadge(group.verdict)}</td>
+                    <td data-label="Your usual" class="numeric muted">${formatPercent(group.baselineWinRate)}</td>
+                    <td data-label="Drawn" class="numeric muted">${formatPercent(group.drawRate)}</td>
+                    <td data-label="Rating change" class="numeric ${deltaClass}">${delta}</td>
+                    <td data-label="Rating impact" class="numeric cost-text ${impactClass}">${formatSigned(impact)}</td>
+                    <td data-label="Finding">${verdictBadge(group.verdict)}</td>
                 </tr>
             `;
         }).join("");
@@ -596,8 +590,8 @@
         els.emptyState.hidden = !noGroups;
 
         if (noGroups) {
-            els.emptyTitle.textContent = "No groups meet these filters.";
-            els.emptyMessage.textContent = data.message || "Try lowering the minimum games count or widening the date range.";
+            els.emptyTitle.textContent = "No openings meet these filters.";
+            els.emptyMessage.textContent = data.message || "Try lowering the games-per-opening filter or widening the date range.";
             els.emptyAction.hidden = false;
             els.emptyAction.textContent = "Reset filters";
             els.emptyAction.onclick = resetFilters;
@@ -632,7 +626,7 @@
             hideLoading();
             if (error.status === 404) {
                 els.workspace.hidden = true;
-                setFormMessage(`No synced games for "${player}" yet. Use Sync & analyze to fetch the history.`);
+                setFormMessage(`No games saved for "${player}" yet. Use "Analyze my games" to fetch them.`);
                 els.username.focus();
                 return;
             }
@@ -660,10 +654,10 @@
                 return job;
             }
             if (job.status === "FAILED") {
-                throw new ApiError(job.error || "The sync failed.", 0, job);
+                throw new ApiError(job.error || "The update failed.", 0, job);
             }
         }
-        throw new ApiError("The sync is taking longer than five minutes. Check the status again shortly.", 0, null);
+        throw new ApiError("The update is taking longer than five minutes. Check the status again shortly.", 0, null);
     }
 
     async function startSync(rawUsername) {
@@ -714,8 +708,6 @@
         setFilters({
             timeClass: "",
             minGames: 5,
-            groupBy: "eco",
-            firstMoves: 6,
             from: "",
             to: ""
         });
@@ -759,7 +751,6 @@
 
         els.filterForm.addEventListener("submit", applyFilters);
         els.resetFilters.addEventListener("click", resetFilters);
-        els.groupBy.addEventListener("change", toggleFirstMoves);
         els.emptyAction.addEventListener("click", resetFilters);
         els.dismissError.addEventListener("click", hideError);
 
@@ -786,7 +777,6 @@
 
     function initialize() {
         bindEvents();
-        toggleFirstMoves();
         checkHealth();
 
         let player = new URLSearchParams(window.location.search).get("player");

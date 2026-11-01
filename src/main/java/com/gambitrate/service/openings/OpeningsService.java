@@ -145,17 +145,20 @@ public class OpeningsService {
     ) {
         String actual = percent(winRate);
         String baseline = percent(baselineWinRate);
+        String side = color == null || color.isBlank()
+                ? "this color"
+                : color.substring(0, 1).toUpperCase(Locale.ROOT) + color.substring(1).toLowerCase(Locale.ROOT);
         if (games < MIN_VERDICT_GAMES) {
-            return "%d games is too small to flag; %s wins vs a %s %s baseline."
-                    .formatted(games, actual, baseline, color);
+            return "Only %d games as %s: too few to judge. You win %s; you usually win %s."
+                    .formatted(games, side, actual, baseline);
         }
         return switch (verdict) {
-            case LEAK -> "%s wins vs a %s %s baseline over %d games; the gap passes the 95%% guard."
-                    .formatted(actual, baseline, color, games);
-            case STRENGTH -> "%s wins vs a %s %s baseline over %d games; the gap passes the 95%% guard."
-                    .formatted(actual, baseline, color, games);
-            case FINE -> "Within normal game-to-game variation: %s wins vs a %s %s baseline over %d games."
-                    .formatted(actual, baseline, color, games);
+            case LEAK, STRENGTH -> ("You win %s of these games as %s. You usually win %s. "
+                    + "Over %d games, a gap that big is very unlikely to be luck.")
+                    .formatted(actual, side, baseline, games);
+            case FINE -> ("You win %s of these games as %s. You usually win %s. "
+                    + "Over %d games, that is within normal game-to-game variation.")
+                    .formatted(actual, side, baseline, games);
         };
     }
 

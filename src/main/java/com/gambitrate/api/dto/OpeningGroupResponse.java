@@ -33,7 +33,8 @@ public record OpeningGroupResponse(
         double estimatedRatingCost,
         @Schema(allowableValues = {"strength", "fine", "leak"}, example = "leak")
         String verdict,
-        @Schema(example = "40.5% wins vs a 52.0% white baseline over 42 games; the gap passes the 95% guard.")
+        @Schema(example = "You win 40.5% of these games as White. You usually win 52.0%. "
+                + "Over 42 games, a gap that big is very unlikely to be luck.")
         String verdictReason
 ) {
 }

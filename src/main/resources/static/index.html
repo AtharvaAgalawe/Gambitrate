@@ -4,14 +4,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f2f2ea">
-    <meta name="description" content="GambitRate finds the openings costing you rating, with sample-size-guarded verdicts.">
+    <meta name="description" content="GambitRate shows which chess openings are costing you rating, in plain language.">
     <title>GambitRate — Opening analysis</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
     <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css?v=4">
-    <script src="/app.js?v=4" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=6">
+    <script src="/app.js?v=6" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -43,11 +43,11 @@
     </noscript>
     <section class="hero" aria-labelledby="heroTitle">
         <div class="hero__content">
-            <p class="section-kicker">Public chess.com history, read honestly</p>
+            <p class="section-kicker">Your chess.com games, made simple</p>
             <h1 id="heroTitle">Your rating has a pattern.</h1>
             <p class="hero__lede">
-                Find the openings that hurt your results, separated from noise.
-                Every verdict shows its sample size and the baseline it was measured against.
+                See which openings are holding your rating back, and how sure we are.
+                Every finding shows how many games it is based on and how it compares with your normal results.
             </p>
 
             <form class="sync-form" id="syncForm" novalidate>
@@ -67,7 +67,7 @@
                             aria-describedby="usernameHelp"
                             required>
                     <button class="button button--primary" id="syncButton" type="submit">
-                        <span class="button__label">Sync &amp; analyze</span>
+                        <span class="button__label">Analyze my games</span>
                         <svg class="button__arrow" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"/>
                         </svg>
@@ -87,32 +87,32 @@
                 <span class="board-marker board-marker--red"></span>
             </div>
             <div class="hero__method">
-                <p class="section-kicker">Three checks before a verdict</p>
-                <h2 id="methodSummaryTitle">Evidence over instinct.</h2>
+                <p class="section-kicker">How it works</p>
+                <h2 id="methodSummaryTitle">Numbers, not hunches.</h2>
                 <ol class="step-list">
                     <li>
                         <span class="step-number">1</span>
                         <div>
-                            <h3>Sync</h3>
-                            <p>Pull the public game history and parse every move clock.</p>
+                            <h3>Fetch</h3>
+                            <p>We pull your public games and read every move.</p>
                         </div>
                     </li>
                     <li>
                         <span class="step-number">2</span>
                         <div>
-                            <h3>Group</h3>
-                            <p>Compare openings by color, ECO, and the results you actually got.</p>
+                            <h3>Compare</h3>
+                            <p>We compare your results in each opening with your normal results.</p>
                         </div>
                     </li>
                     <li>
                         <span class="step-number">3</span>
                         <div>
-                            <h3>Guard</h3>
-                            <p>Call a leak only after the sample clears a 95% baseline check.</p>
+                            <h3>Check</h3>
+                            <p>We only flag an opening when enough games show a real gap.</p>
                         </div>
                     </li>
                 </ol>
-                <p class="hero__aside-note">No engine required. No blunder claims from clocks.</p>
+                <p class="hero__aside-note">No engine and no guessing — we only report what your games show.</p>
             </div>
         </aside>
     </section>
@@ -121,7 +121,7 @@
         <div class="sync-panel__heading">
             <span class="sync-indicator" id="syncIndicator" aria-hidden="true"></span>
             <div>
-                <p class="sync-panel__label" id="syncStatusLabel">Preparing sync</p>
+                <p class="sync-panel__label" id="syncStatusLabel">Getting ready</p>
                 <p class="sync-panel__meta" id="syncStatusMeta"></p>
             </div>
         </div>
@@ -144,7 +144,7 @@
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M20 11a8 8 0 1 0-2.3 6.7M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="square"/>
                     </svg>
-                    Sync again
+                    Update games
                 </button>
             </div>
         </header>
@@ -166,27 +166,27 @@
         <div id="analysisContent">
             <section class="scoreboard" id="scoreboard" aria-label="Report summary">
                 <div class="scoreboard__main">
-                    <p class="stat-label">Biggest rating cost</p>
+                    <p class="stat-label">Biggest rating loss</p>
                     <p class="stat-value" id="statBiggestCost">—</p>
-                    <p class="stat-detail" id="statBiggestDetail">No groups loaded yet.</p>
+                    <p class="stat-detail" id="statBiggestDetail">No openings loaded yet.</p>
                 </div>
                 <div class="scoreboard__item">
                     <p class="stat-number" id="statGroups">—</p>
-                    <p class="stat-label">Openings in view</p>
+                    <p class="stat-label">Openings compared</p>
                 </div>
                 <div class="scoreboard__item">
                     <p class="stat-number" id="statLeaks">—</p>
-                    <p class="stat-label">Leaks passing the guard</p>
+                    <p class="stat-label">Weak openings found</p>
                 </div>
                 <div class="scoreboard__item">
                     <p class="stat-number" id="statGames">—</p>
-                    <p class="stat-label">Games in view</p>
+                    <p class="stat-label">Games analyzed</p>
                 </div>
             </section>
 
             <form class="filter-bar" id="filterForm" aria-label="Opening filters">
                 <fieldset class="filter-field filter-field--segmented">
-                    <legend>Time class</legend>
+                    <legend>Game speed</legend>
                     <div class="segmented">
                         <label><input type="radio" name="timeClass" value="" checked><span>All</span></label>
                         <label><input type="radio" name="timeClass" value="bullet"><span>Bullet</span></label>
@@ -197,41 +197,28 @@
                 </fieldset>
 
                 <label class="filter-field">
-                    <span>Minimum games</span>
+                    <span>Games per opening</span>
                     <select id="minGames" name="minGames">
-                        <option value="5">5 games</option>
-                        <option value="10">10 games</option>
-                        <option value="20">20 games</option>
-                        <option value="50">50 games</option>
+                        <option value="5">5 or more</option>
+                        <option value="10">10 or more</option>
+                        <option value="20">20 or more</option>
+                        <option value="50">50 or more</option>
                     </select>
-                </label>
-
-                <label class="filter-field">
-                    <span>Group by</span>
-                    <select id="groupBy" name="groupBy">
-                        <option value="eco">ECO code</option>
-                        <option value="line">Opening line</option>
-                    </select>
-                </label>
-
-                <label class="filter-field" id="firstMovesField" hidden>
-                    <span>First moves</span>
-                    <input class="text-input" id="firstMoves" name="firstMoves" type="number" min="1" max="20" value="6">
                 </label>
 
                 <fieldset class="filter-field filter-field--dates">
-                    <legend>Date range</legend>
+                    <legend>Played between</legend>
                     <div class="date-range">
                         <label class="visually-hidden" for="fromDate">From date</label>
                         <input class="text-input" id="fromDate" name="from" type="date">
-                        <span class="date-range__dash" aria-hidden="true">to</span>
+                        <span class="date-range__dash" aria-hidden="true">and</span>
                         <label class="visually-hidden" for="toDate">To date</label>
                         <input class="text-input" id="toDate" name="to" type="date">
                     </div>
                 </fieldset>
 
                 <div class="filter-actions">
-                    <button class="button button--secondary" id="applyFilters" type="submit">Apply filters</button>
+                    <button class="button button--secondary" id="applyFilters" type="submit">Apply</button>
                     <button class="text-button" id="resetFilters" type="button">Reset</button>
                 </div>
             </form>
@@ -240,14 +227,14 @@
                 <section class="panel chart-panel" aria-labelledby="chartTitle">
                     <header class="panel__header">
                         <div>
-                            <p class="section-kicker">Ranked by impact</p>
-                            <h3 id="chartTitle">The costliest patterns</h3>
+                            <p class="section-kicker">Worst first</p>
+                            <h3 id="chartTitle">Where you lose the most</h3>
                         </div>
-                        <p class="panel__note">Heuristic Elo impact</p>
+                        <p class="panel__note">estimated rating points</p>
                     </header>
                     <div class="chart-legend" aria-hidden="true">
-                        <span><i class="legend-dot legend-dot--cost"></i>rating cost</span>
-                        <span><i class="legend-dot legend-dot--gain"></i>rating gain</span>
+                        <span><i class="legend-dot legend-dot--cost"></i>rating lost</span>
+                        <span><i class="legend-dot legend-dot--gain"></i>rating gained</span>
                     </div>
                     <div class="cost-chart" id="costChart"></div>
                     <p class="visually-hidden" id="chartSummary"></p>
@@ -256,8 +243,8 @@
                 <aside class="panel verdict-panel" aria-labelledby="verdictTitle">
                     <header class="panel__header">
                         <div>
-                            <p class="section-kicker">What stands out</p>
-                            <h3 id="verdictTitle">The verdict</h3>
+                            <p class="section-kicker">The main finding</p>
+                            <h3 id="verdictTitle">The bottom line</h3>
                         </div>
                     </header>
                     <div class="verdict-content" id="verdictContent"></div>
@@ -267,25 +254,25 @@
             <section class="panel table-panel" id="tablePanel" aria-labelledby="tableTitle">
                 <header class="panel__header">
                     <div>
-                        <p class="section-kicker">Everything in view</p>
-                        <h3 id="tableTitle">Opening groups</h3>
+                        <p class="section-kicker">All the numbers</p>
+                        <h3 id="tableTitle">Openings</h3>
                     </div>
                     <p class="panel__note" id="tableCount"></p>
                 </header>
                 <div class="table-wrap">
                     <table class="data-table" id="openingsTable">
-                        <caption class="visually-hidden">Opening performance groups with win rate, baseline, rating delta, and verdict</caption>
+                        <caption class="visually-hidden">Openings with games played, win rate, your usual win rate, rating change, rating impact, and finding</caption>
                         <thead>
                         <tr>
                             <th scope="col" data-key="opening"><button type="button" class="sort-button">Opening</button></th>
-                            <th scope="col">Side</th>
+                            <th scope="col">Color</th>
                             <th scope="col" data-key="games"><button type="button" class="sort-button">Games</button></th>
-                            <th scope="col" data-key="winRate"><button type="button" class="sort-button">Win rate</button></th>
-                            <th scope="col" data-key="baselineWinRate">Baseline</th>
-                            <th scope="col">Draw</th>
-                            <th scope="col">Avg Δ</th>
-                            <th scope="col" data-key="estimatedRatingCost"><button type="button" class="sort-button">Cost</button></th>
-                            <th scope="col">Verdict</th>
+                            <th scope="col" data-key="winRate"><button type="button" class="sort-button">Won</button></th>
+                            <th scope="col" title="Your overall win rate for this color">Your usual</th>
+                            <th scope="col">Drawn</th>
+                            <th scope="col" title="Average rating change from your previous game">Rating change</th>
+                            <th scope="col" data-key="estimatedRatingCost" title="Estimated rating points won or lost in this opening"><button type="button" class="sort-button">Rating impact</button></th>
+                            <th scope="col">Finding</th>
                         </tr>
                         </thead>
                         <tbody id="openingsBody"></tbody>
@@ -299,7 +286,7 @@
 
             <section class="empty-state" id="emptyState" hidden aria-live="polite">
                 <p class="section-kicker">Nothing to score yet</p>
-                <h3 id="emptyTitle">No opening groups found</h3>
+                <h3 id="emptyTitle">No openings found</h3>
                 <p id="emptyMessage"></p>
                 <button class="button button--secondary" id="emptyAction" type="button" hidden></button>
             </section>
@@ -308,41 +295,40 @@
 
     <section class="next-up" aria-label="Coming next">
         <p class="section-kicker">Next on the board</p>
-        <p>Time-control leaks, tilt, trends, and a top-three summary are next. This page only shows what the API can defend today.</p>
+        <p>More reports are coming: time controls, tilt, trends, and a top-three summary. This page only shows what the data can support today.</p>
     </section>
 
     <section class="method" id="method" aria-labelledby="methodTitle">
         <div class="method__intro">
             <p class="section-kicker">Method</p>
-            <h2 id="methodTitle">Numbers first. Verdict second.</h2>
+            <h2 id="methodTitle">Numbers first. Conclusions second.</h2>
             <p>
                 GambitRate is an opinionated read of the games you have already played.
-                It looks for a result pattern, then asks whether the sample is strong enough to say it matters.
+                It looks for a pattern in your results, then checks whether there are enough games to trust it.
             </p>
         </div>
         <div class="method__items">
             <details open>
-                <summary>How a verdict is assigned</summary>
+                <summary>How we decide what to flag</summary>
                 <p>
-                    Each opening group is compared with your overall win rate for that color.
-                    A verdict needs at least five games and a two-sided 95% z-test.
-                    Groups below the minimum game count are hidden.
+                    We compare each opening with your overall win rate for the same color.
+                    An opening is only flagged when it has at least five games and the difference is very unlikely to be luck.
+                    Openings with fewer games are hidden.
                 </p>
             </details>
             <details>
-                <summary>What rating cost means</summary>
+                <summary>What "rating impact" means</summary>
                 <p>
-                    The signed cost is an estimate: (color baseline win rate − group win rate) × games × 10.
-                    Positive values suggest rating cost; negative values suggest rating gain.
-                    It is a ranking aid, not a chess.com rating receipt.
+                    We compare your win rate in an opening with your usual win rate, then scale the difference by how many games you played.
+                    The result is an estimate in rating points: a negative number means you are losing rating there, and a positive one means you are gaining.
+                    It is a guide for ranking problems, not an official rating change.
                 </p>
             </details>
             <details>
-                <summary>What this page does not claim</summary>
+                <summary>What we don't claim</summary>
                 <p>
-                    PGN clocks show time, not move quality. A low clock is not a blunder.
-                    Without an engine, this page does not claim to know which move caused a loss.
-                    Accuracy is only shown by the API when chess.com supplied it.
+                    We do not use a chess engine, so we can't say which single move lost a game.
+                    A low clock does not prove a mistake. We only show accuracy when chess.com supplied it.
                 </p>
             </details>
         </div>
